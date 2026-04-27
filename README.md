@@ -1,1 +1,0 @@
-# FACTS_VER22
