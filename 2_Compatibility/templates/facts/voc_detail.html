@@ -1,0 +1,143 @@
+{% extends "facts/base.html" %}
+{% block content %}
+<div class="voc-detail-layout">
+  <div class="card-header-row">
+    <h3>{% if post.is_notice %}[공지] {% endif %}{{ post.title }}</h3>
+    <div class="toolbar-inline">
+      <a href="{% url 'facts:voc' %}" class="btn-secondary btn-sm">목록</a>
+      {% if can_edit %}<a href="{% url 'facts:voc_new' %}?edit_id={{ post.id }}" class="btn-primary btn-sm">수정</a>{% endif %}
+      {% if can_delete %}
+      <button type="button" class="btn-secondary btn-sm" id="vocDeleteBtn" data-delete-form-id="vocDeleteForm">삭제</button>
+      <form method="post" id="vocDeleteForm" style="display:none;">{% csrf_token %}<input type="hidden" name="action" value="delete"></form>
+      {% endif %}
+    </div>
+  </div>
+  <div style="font-size:12px; color:#56738f;">작성자: {{ post.username }} / 부서: {{ post.department }} / 작성일: {{ post.created_at|date:"Y-m-d H:i" }} / 수정일: {{ post.updated_at|date:"Y-m-d H:i" }}</div>
+  <section class="voc-panel"><div class="voc-panel-title">글 본문</div><div class="cell-readonly long-cell" style="min-height:200px; white-space:pre-wrap;">{{ post.content }}</div></section>
+
+  <section class="voc-panel">
+    <div class="card-header-row"><h4 style="margin:0;">공식답변</h4><span>{% if is_answered %}<span class="voc-badge-answer done">답변완료</span>{% else %}<span class="voc-badge-answer pending">답변대기</span>{% endif %}</span></div>
+    <div style="font-size:12px; color:#56738f;">공식답변 상태: {% if post.official_answer_status %}{{ post.official_answer_status.status_name }}{% else %}확인대기{% endif %}</div>
+    {% if post.official_answer %}
+      <div style="font-size:12px; color:#56738f; margin-bottom:8px;">답변자: {{ post.official_answer_by }} / 부서: {{ post.official_answer_department }} / 답변일: {{ post.official_answer_at|date:"Y-m-d H:i" }}</div>
+      <div class="cell-readonly long-cell" style="white-space:pre-wrap; min-height:80px;">{{ post.official_answer }}</div>
+    {% else %}
+      <div class="empty-cell">아직 등록된 공식답변이 없습니다.</div>
+    {% endif %}
+
+    {% if is_voc_admin %}
+    <form method="post" style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="save_official_answer">
+      <select name="official_answer_status_id">
+        <option value="">상태 미지정</option>
+        {% for st in answer_status_options %}
+        <option value="{{ st.id }}" {% if post.official_answer_status_id == st.id %}selected{% endif %}>{{ st.status_name }}</option>
+        {% endfor %}
+      </select>
+      <textarea name="official_answer" rows="5" placeholder="공식답변 내용을 입력하세요.">{{ post.official_answer }}</textarea>
+      <div><button type="submit" class="btn-primary btn-sm">공식답변 저장</button></div>
+    </form>
+    {% endif %}
+  </div>
+
+  <section class="voc-panel">
+    <div class="card-header-row"><h4 style="margin:0;">댓글</h4></div>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      {% for c in comments %}
+      <div style="border:1px solid #e2eaf4; border-radius:8px; padding:10px; background:#fbfdff;">
+        <div style="font-size:12px; color:#56738f; margin-bottom:6px; display:flex; justify-content:space-between; gap:8px;">
+          <span>{{ c.username }} / {{ c.department }} / {{ c.created_at|date:"Y-m-d H:i" }}{% if c.updated_at and c.updated_at != c.created_at %} (수정됨: {{ c.updated_at|date:"Y-m-d H:i" }}){% endif %}</span>
+          {% if c.can_manage %}
+          <span style="display:flex; gap:6px;">
+            <button
+              type="button"
+              class="btn-secondary btn-sm comment-edit-btn"
+              data-comment-id="{{ c.id }}"
+              data-comment-content="{{ c.content|escape }}"
+            >수정</button>
+            <button
+              type="button"
+              class="btn-secondary btn-sm comment-delete-btn"
+              data-comment-id="{{ c.id }}"
+            >삭제</button>
+          </span>
+          {% endif %}
+        </div>
+        <div style="white-space:pre-wrap;">{{ c.content }}</div>
+      </div>
+      {% empty %}
+      <div class="empty-cell">등록된 댓글이 없습니다.</div>
+      {% endfor %}
+    </div>
+    <form method="post" style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add_comment">
+      <textarea name="comment_content" rows="3" placeholder="댓글을 입력하세요." required></textarea>
+      <div><button type="submit" class="btn-secondary btn-sm">댓글 등록</button></div>
+    </form>
+  </section>
+</div>
+<script>
+(function(){
+  const deleteBtn = document.getElementById("vocDeleteBtn");
+  const deleteForm = document.getElementById("vocDeleteForm");
+  if (!deleteBtn || !deleteForm || !window.FACTSCommonModal) return;
+  deleteBtn.addEventListener("click", async function(){
+    const ok = await window.FACTSCommonModal.confirm("삭제하시겠습니까?");
+    if (ok) deleteForm.submit();
+  });
+  const msg = new URLSearchParams(window.location.search).get("msg");
+  if (msg) window.FACTSCommonModal.alert(msg);
+
+  const editForm = document.getElementById("vocCommentEditForm");
+  const editIdInput = document.getElementById("vocCommentEditId");
+  const editContentInput = document.getElementById("vocCommentEditContent");
+  document.querySelectorAll(".comment-edit-btn").forEach(function(btn){
+    btn.addEventListener("click", async function(){
+      if (!window.FACTSCommonModal || !editForm || !editIdInput || !editContentInput) return;
+      editIdInput.value = btn.dataset.commentId || "";
+      editContentInput.value = btn.dataset.commentContent || "";
+      const ok = await window.FACTSCommonModal.confirm(
+        '<div style="display:flex; flex-direction:column; gap:8px; text-align:left;">'
+        + '<div>댓글 내용을 수정하세요.</div>'
+        + '<textarea id="factsCommentEditModalTextarea" rows="5" style="width:100%;">' + (editContentInput.value || "") + '</textarea>'
+        + "</div>",
+        {confirmText: "저장"}
+      );
+      if (!ok) return;
+      const ta = document.getElementById("factsCommentEditModalTextarea");
+      editContentInput.value = (ta ? ta.value : "").trim();
+      if (!editContentInput.value) {
+        window.FACTSCommonModal.alert("댓글 내용을 입력하세요.");
+        return;
+      }
+      editForm.submit();
+    });
+  });
+  document.querySelectorAll(".comment-delete-btn").forEach(function(btn){
+    btn.addEventListener("click", async function(){
+      if (!window.FACTSCommonModal) return;
+      const ok = await window.FACTSCommonModal.confirm("댓글을 삭제하시겠습니까?");
+      if (!ok) return;
+      const form = document.getElementById("vocCommentDeleteForm");
+      const input = document.getElementById("vocCommentDeleteId");
+      if (!form || !input) return;
+      input.value = btn.dataset.commentId || "";
+      form.submit();
+    });
+  });
+})();
+</script>
+<form method="post" id="vocCommentEditForm" style="display:none;">
+  {% csrf_token %}
+  <input type="hidden" name="action" value="edit_comment">
+  <input type="hidden" id="vocCommentEditId" name="comment_id" value="">
+  <input type="hidden" id="vocCommentEditContent" name="comment_content" value="">
+</form>
+<form method="post" id="vocCommentDeleteForm" style="display:none;">
+  {% csrf_token %}
+  <input type="hidden" name="action" value="delete_comment">
+  <input type="hidden" id="vocCommentDeleteId" name="comment_id" value="">
+</form>
+{% endblock %}
