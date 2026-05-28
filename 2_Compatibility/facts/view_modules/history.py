@@ -1,1158 +1,531 @@
-@login_required
-def dashboard_override_save_api(request):
-    _ensure_browser_close_session(request)
-
-    payload = json.loads(request.body.decode("utf-8"))
-    snap_date = datetime.strptime(payload["snap_date"], "%Y-%m-%d").date()
-    date_block_response = _ensure_current_day_editable(snap_date)
-    if date_block_response is not None:
-        return date_block_response
-    date_block_response = _ensure_current_day_editable(snap_date)
-    if date_block_response is not None:
-        return date_block_response
-    lineid = (payload.get("lineid") or "").strip()
-    items = payload.get("items", [])
-    first_processid = (items[0].get("processid") if items else "") or ""
-    permission_response = _check_page_permission(request, "dashboard", lineid=lineid, processid=first_processid, require_edit=True, popup=True)
-    if permission_response is not None:
-        return permission_response
-    field_type = payload["field_type"]
-    value = payload["value"]
-    actor = _get_actor(request)
-
-    for item in items:
-        processid = item["processid"]
-        stepseq = item["stepseq"]
-
-        source_rows = FactsWipSource.objects.filter(
-            snap_date=snap_date,
-            lineid=lineid,
-            processid=processid,
-            stepseq=stepseq,
-        )
-        if not source_rows.exists():
-            return JsonResponse(
-                {"ok": False, "message": "호환Path가 있어야 변경 가능합니다."},
-                status=400,
-            )
-
-        for src in source_rows:
-            obj, _ = FactsStepPathOverride.objects.get_or_create(
-                snap_date=snap_date,
-                lineid=src.lineid or "",
-                processid=src.processid,
-                stepseq=src.stepseq,
-                recipeid=src.recipeid or "",
-                path=src.path or "",
-                eqpline=src.eqpline or "",
-                childeqp=src.childeqp or "",
-                defaults={"created_by": actor},
-            )
-
-            before_json = {
-                "lineid": obj.lineid or "",
-                "manual_always_emergency": obj.manual_always_emergency,
-                "manual_major_minor": obj.manual_major_minor,
-            }
-
-
-            if field_type == "always_emergency":
-                obj.manual_always_emergency = value
-            elif field_type == "major_minor":
-                obj.manual_major_minor = value
-
-            obj.updated_by = actor
-            obj.is_active = True
-            obj.save()
-
-            FactsEditHistory.objects.create(
-                action_type="override",
-                snap_date=snap_date,
-                lineid=src.lineid or "",
-                processid=src.processid,
-                stepseq=src.stepseq,
-                recipeid=src.recipeid or "",
-                changed_by=actor,
-                before_json=before_json,
-                after_json={
-                    "lineid": obj.lineid or "",
-                    "manual_always_emergency": obj.manual_always_emergency,
-                    "manual_major_minor": obj.manual_major_minor,
-                },
-            )
-
-    rebuild_targets = {
-            (
-                snap_date,
-                (item.get("lineid") or lineid or "").strip(),
-                (item.get("processid") or "").strip(),
-                (item.get("stepseq") or "").strip(),
-            )
-            for item in items
-            if (item.get("processid") or "").strip() and (item.get("stepseq") or "").strip()
-        }
-
-    for target_snap_date, target_lineid, target_processid, target_stepseq in rebuild_targets:
-        rebuild_filter_cache_for_step(
-            snap_date=target_snap_date,
-            lineid=target_lineid,
-            processid=target_processid,
-            stepseq=target_stepseq,
-            )
-
-
-    _invalidate_dashboard_graph_cache_for_snap_date(snap_date)
-    cache.clear()
-    return JsonResponse({"ok": True})
-
 @require_GET
 @login_required
-def dashboard_override_detail_api(request):
+def dashboard_upload_template(request):
     _ensure_browser_close_session(request)
     permission_response = _check_page_permission(request, "dashboard", ignore_blank_scope=True)
     if permission_response is not None:
         return permission_response
 
-    
-    snap_date_str = request.GET.get("snap_date", "").strip()
-    lineid = request.GET.get("lineid", "").strip()
-    processid = request.GET.get("processid", "").strip()
-    stepseq = request.GET.get("stepseq", "").strip()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "FACTS_UPLOAD_TEMPLATE"
 
-    if not snap_date_str:
-        return JsonResponse({"ok": False, "message": "기준일이 없습니다."}, status=400)
-    if not processid or not stepseq:
-        return JsonResponse({"ok": False, "message": "processid 또는 stepseq가 없습니다."}, status=400)
+    headers = [
+        "LINE",
+        "PROCESSID",
+        "STEPSEQ",
+        "호환계획_ACTION",
+        "호환계획_ID",
+        "호환계획_상시/비상시",
+        "호환계획_주요/비주요",
+        "호환계획_호환EQPBODY명",
+        "호환계획_호환EQPCHAM명",
+        "호환계획_호환완료계획일",
+        "호환계획_평가LotID",
+        "호환계획_평가단계",
+        "호환계획_비고",
+        "미등록TIP호환Path_ACTION",
+        "미등록TIP호환Path_ID",
+        "미등록TIP호환Path_상시/비상시",
+        "미등록TIP호환Path_주요/비주요",
+        "미등록TIP호환Path_호환EQPBODY명",
+        "미등록TIP호환Path_호환EQPCHAM명",
+    ]
+    ws.append(headers)
 
-    scope_response = _check_page_permission(request, "dashboard", lineid=lineid, processid=processid, popup=True)
-    if scope_response is not None:
-        return scope_response
+    ws.append([
+        "PFR1",
+        "P1SD",
+        "SD00000000",
+        "UPSERT",
+        "",
+        "상시",
+        "주요",
+        "WSOD701",
+        "F(*하나의 행엔 하나의 CHAM만 입력해주세요.)",
+        "2026-04-13",
+        "LOT123456",
+        "",
+        "계획 예시",
+        "UPSERT",
+        "",
+        "상시",
+        "주요",
+        "WSOD702",
+        "1(*하나의 행엔 하나의 CHAM만 입력해주세요.)",
+    ])
 
-    snap_date = datetime.strptime(snap_date_str, "%Y-%m-%d").date()
-    rows = _build_override_detail_rows(snap_date, lineid, processid, stepseq)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    return JsonResponse({
-        "ok": True,
-        "rows": rows,
-    })
+    header_map = {name: idx + 1 for idx, name in enumerate(headers)}
 
-@require_POST
-@login_required
-def dashboard_override_member_save_api(request):
-    _ensure_browser_close_session(request)
+    widths = {
+        "A": 14,
+        "B": 16, "C": 16, "D": 16, "E": 14, "F": 25, "G": 25,
+        "H": 25, "I": 30, "J": 25, "K": 18, "L": 16, "M": 24,
+        "N": 16, "O": 14, "P": 30, "Q": 30, "R": 34, "S": 34,
+    }
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
 
-    payload = json.loads(request.body.decode("utf-8"))
-    snap_date = datetime.strptime(payload["snap_date"], "%Y-%m-%d").date()
-    date_block_response = _ensure_current_day_editable(snap_date)
-    if date_block_response is not None:
-        return date_block_response
-    lineid = (payload.get("lineid") or "").strip()
-    processid = (payload.get("processid") or "").strip()
-    permission_response = _check_page_permission(request, "dashboard", lineid=lineid, processid=processid, require_edit=True, popup=True)
-    if permission_response is not None:
-        return permission_response
-    stepseq = (payload.get("stepseq") or "").strip()
-    field_type = (payload.get("field_type") or "").strip()
-    member_items = payload.get("member_items", [])
-    actor = _get_actor(request)
+    ws.freeze_panes = "A2"
 
+    dv_always = DataValidation(type="list", formula1='"상시,비상시"', allow_blank=True)
+    dv_major = DataValidation(type="list", formula1='"주요,비주요"', allow_blank=True)
+    dv_action = DataValidation(type="list", formula1='"UPSERT,DELETE"', allow_blank=True)
 
-    if not processid or not stepseq or field_type not in ("always_emergency", "major_minor"):
-        return JsonResponse({"ok": False, "message": "필수값이 부족합니다."}, status=400)
-
-    for item in member_items:
-        selected_flag = (item.get("selected_flag") or "N").strip().upper()
-        eqp_body_name = _normalize_upper(item.get("eqp_body_name"))
-        eqp_cham_name = _normalize_upper(item.get("eqp_cham_name"))
-        source_types = item.get("source_types") or []
-        path_refs = item.get("path_refs") or []
-
-        if field_type == "always_emergency":
-            target_value = "상시" if selected_flag == "Y" else "비상시"
-        else:
-            target_value = "주요" if selected_flag == "Y" else "비주요"
-
-        if "SOURCE_PATH" in source_types:
-            for ref in path_refs:
-                recipeid = ref.get("recipeid") or ""
-                path = ref.get("path") or ""
-                eqpline = ref.get("eqpline") or ""
-                childeqp = ref.get("childeqp") or ""
-
-                src = FactsWipSource.objects.filter(
-                    snap_date=snap_date,
-                    lineid=lineid,
-                    processid=processid,
-                    stepseq=stepseq,
-                    recipeid=recipeid,
-                    path=path,
-                    eqpline=eqpline,
-                    childeqp=childeqp,
-                ).first()
-                if not src:
-                    continue
-
-                obj, _ = FactsStepPathOverride.objects.get_or_create(
-                    snap_date=snap_date,
-                    lineid=lineid,
-                    processid=processid,
-                    stepseq=stepseq,
-                    recipeid=recipeid,
-                    path=path,
-                    eqpline=eqpline,
-                    childeqp=childeqp,
-                    defaults={"created_by": actor},
-                )
-
-                before_json = {
-                    "lineid": obj.lineid or "",
-                    "manual_always_emergency": obj.manual_always_emergency,
-                    "manual_major_minor": obj.manual_major_minor,
-                    "member_key": item.get("member_key") or "",
-                }
-
-                if field_type == "always_emergency":
-                    obj.manual_always_emergency = target_value
-                else:
-                    obj.manual_major_minor = target_value
-
-                obj.updated_by = actor
-                obj.is_active = True
-                obj.save()
-
-                FactsEditHistory.objects.create(
-                    action_type="override",
-                    snap_date=snap_date,
-                    lineid=lineid,
-                    processid=processid,
-                    stepseq=stepseq,
-                    recipeid=recipeid,
-                    changed_by=actor,
-                    before_json=before_json,
-                    after_json={
-                        "lineid": obj.lineid or "",
-                        "manual_always_emergency": obj.manual_always_emergency,
-                        "manual_major_minor": obj.manual_major_minor,
-                        "member_key": item.get("member_key") or "",
-                    },
-                )
-
-        if "TIP_MISSING" in source_types and eqp_body_name:
-            manual_qs = FactsTipMissingCompatPath.objects.filter(
-                snap_date=snap_date,
-                lineid=lineid,
-                processid=processid,
-                stepseq=stepseq,
-                eqp_body_name=eqp_body_name,
-                eqp_cham_name=eqp_cham_name,
-                is_active=True,
-            )
-
-            for obj in manual_qs:
-                before_json = _tip_missing_to_json(obj)
-
-                if field_type == "always_emergency":
-                    obj.always_emergency = target_value
-                else:
-                    obj.major_minor = target_value
-
-                obj.updated_by = actor
-                obj.save()
-
-                FactsEditHistory.objects.create(
-                    action_type="tip_missing_update",
-                    snap_date=snap_date,
-                    lineid=lineid,
-                    processid=processid,
-                    stepseq=stepseq,
-                    recipeid=obj.recipeid or "",
-                    changed_by=actor,
-                    before_json=before_json,
-                    after_json=_tip_missing_to_json(obj),
-                )
-
-    rebuild_filter_cache_for_step(
-            snap_date=snap_date,
-            lineid=lineid,
-            processid=processid,
-            stepseq=stepseq,
-        )
-
-    _invalidate_dashboard_graph_cache_for_snap_date(snap_date)
-    cache.clear()
-    return JsonResponse({"ok": True})
-
-@require_GET
-@login_required
-def dashboard_plan_detail_api(request):
-    _ensure_browser_close_session(request)
-    permission_response = _check_page_permission(request, "dashboard", ignore_blank_scope=True)
-    if permission_response is not None:
-        return permission_response
-
-    snap_date_str = request.GET.get("snap_date", "").strip()
-    lineid = request.GET.get("lineid", "").strip()
-    processid = request.GET.get("processid", "").strip()
-    stepseq = request.GET.get("stepseq", "").strip()
-
-    if not snap_date_str:
-        return JsonResponse({"ok": False, "message": "기준일이 없습니다."}, status=400)
-
-    scope_response = _check_page_permission(request, "dashboard", lineid=lineid, processid=processid, popup=True)
-    if scope_response is not None:
-        return scope_response
-
-    snap_date = datetime.strptime(snap_date_str, "%Y-%m-%d").date()
-    rows = services.get_plan_detail_rows_as_of(snap_date, lineid, processid, stepseq)
-    if str(request.GET.get("debug_prp_table") or "").strip() == "1":
-        summary_map = services._build_plan_summary_map([(lineid, processid, stepseq)], as_of_date=snap_date)
-        summary_rows = summary_map.get(services._step_group_key(lineid, processid, stepseq), {})
-        detail_keys = {(str(r.get("lineid") or lineid), str(r.get("processid") or processid), str(r.get("stepseq") or stepseq), str(r.get("eqp_body_name") or ""), str(r.get("eqp_cham_name") or ""), str(r.get("always_emergency") or ""), str(r.get("major_minor") or ""), "plan", str(r.get("plan_id") or r.get("id") or "")) for r in rows}
-        lines = [
-            f"plan_detail_rows={rows}",
-            f"plan_summary_rows={summary_rows}",
-            f"detail-only rows={sorted(detail_keys)}",
-            "payload_type=plan",
-        ]
-        try_save_feedback_log("prp_table_plan_detail_debug", "\n".join(lines), "PRP_TABLE_PLAN_DETAIL_DEBUG")
-
-    return JsonResponse({
-        "ok": True,
-        "rows": rows,
-    })
-
-@require_POST
-@login_required
-def dashboard_plan_save_api(request):
-    _ensure_browser_close_session(request)
-
-    payload = json.loads(request.body.decode("utf-8"))
-    items = payload.get("items", [])
-    actor = _get_actor(request)
-    snap_date_str = (payload.get("snap_date") or "").strip()
-    snap_date = datetime.strptime(snap_date_str, "%Y-%m-%d").date() if snap_date_str else None
-    date_block_response = _ensure_current_day_editable(snap_date)
-    if date_block_response is not None:
-        return date_block_response
-    lineid = (payload.get("lineid") or "").strip()
-    first_processid = (items[0].get("processid") if items else "") or ""
-    permission_response = _check_page_permission(request, "dashboard", lineid=lineid, processid=first_processid, require_edit=True, popup=True)
-    if permission_response is not None:
-        return permission_response
-
-    always_emergency = (payload.get("always_emergency") or "").strip()
-    major_minor = (payload.get("major_minor") or "").strip()
-    eqp_body_name = _normalize_upper(payload.get("eqp_body_name"))
-    eqp_cham_name = _normalize_upper(payload.get("eqp_cham_name"))
-    compatibility_due_date = _normalize_date_input(payload.get("compatibility_due_date"))
-    eval_lot_id = _normalize_upper(payload.get("eval_lot_id"))
-    required_eval_stage_id = payload.get("required_eval_stage_id") or None
-    memo = (payload.get("memo") or "").strip()
-    plan_id = payload.get("plan_id")
-    original_eqp_body_name = _normalize_upper(payload.get("original_eqp_body_name"))
-    original_eqp_cham_name = _normalize_upper(payload.get("original_eqp_cham_name"))
-
-    stage_obj = None
-    if required_eval_stage_id:
-        stage_obj = FactsEvalStageMaster.objects.filter(
-            id=required_eval_stage_id,
-            is_active=True,
-        ).first()
-
-    if not eqp_body_name:
-        return JsonResponse({"ok": False, "message": "호환EQPBODY명은 필수기재입니다."}, status=400)
-    if not items:
-        return JsonResponse({"ok": False, "message": "대상 step이 없습니다."}, status=400)
-
-    for item in items:
-        item_lineid = (item.get("lineid") or lineid or "").strip()
-        processid = item["processid"]
-        stepseq = item["stepseq"]
-
-        if plan_id:
-            obj = FactsStepPlan.objects.filter(
-                id=plan_id,
-                lineid=item_lineid,
-                processid=processid,
-                stepseq=stepseq,
-                is_active=True,
-            ).first()
-            if not obj and original_eqp_body_name:
-                obj = FactsStepPlan.objects.filter(
-                    lineid=item_lineid,
-                    processid=processid,
-                    stepseq=stepseq,
-                    eqp_body_name=original_eqp_body_name,
-                    eqp_cham_name=original_eqp_cham_name,
-                    is_active=True,
-                ).order_by("-updated_at", "-id").first()
-            if not obj:
-                return JsonResponse({"ok": False, "message": "수정 대상 계획이 없습니다."}, status=404)
-
-            before_json = _plan_to_json(obj)
-            obj.always_emergency = always_emergency
-            obj.major_minor = major_minor
-            obj.eqp_body_name = eqp_body_name
-            obj.eqp_cham_name = eqp_cham_name
-            obj.compatibility_due_date = compatibility_due_date
-            obj.eval_lot_id = eval_lot_id
-            obj.required_eval_stage = stage_obj
-            obj.memo = memo
-            obj.updated_by = actor
-            obj.save()
-
-            FactsEditHistory.objects.create(
-                action_type="plan_update",
-                snap_date=snap_date,
-                lineid=item_lineid,
-                processid=processid,
-                stepseq=stepseq,
-                recipeid=obj.recipeid or "",
-                changed_by=actor,
-                before_json=before_json,
-                after_json=_plan_to_json(obj),
-            )
-        else:
-            obj = FactsStepPlan.objects.create(
-                lineid=item_lineid,
-                processid=processid,
-                stepseq=stepseq,
-                recipeid="",
-                always_emergency=always_emergency,
-                major_minor=major_minor,
-                eqp_body_name=eqp_body_name,
-                eqp_cham_name=eqp_cham_name,
-                compatibility_due_date=compatibility_due_date,
-                eval_lot_id=eval_lot_id,
-                required_eval_stage=stage_obj,
-                memo=memo,
-                is_active=True,
-                created_by=actor,
-                updated_by=actor,
-            )
-
-            FactsEditHistory.objects.create(
-                action_type="plan_add",
-                snap_date=snap_date,
-                lineid=item_lineid,
-                processid=processid,
-                stepseq=stepseq,
-                recipeid="",
-                changed_by=actor,
-                before_json={},
-                after_json=_plan_to_json(obj),
-            )
-
-    rebuild_targets = {
-            (
-                snap_date,
-                (item.get("lineid") or lineid or "").strip(),
-                (item.get("processid") or "").strip(),
-                (item.get("stepseq") or "").strip(),
-            )
-            for item in items
-            if (item.get("processid") or "").strip() and (item.get("stepseq") or "").strip()
-        }
-
-    for target_snap_date, target_lineid, target_processid, target_stepseq in rebuild_targets:
-        rebuild_filter_cache_for_step(
-            snap_date=target_snap_date,
-            lineid=target_lineid,
-            processid=target_processid,
-            stepseq=target_stepseq,
-        )
-
-    _invalidate_dashboard_graph_cache_for_snap_date(snap_date)
-    cache.clear()
-    return JsonResponse({"ok": True})
-
-@require_POST
-@login_required
-def dashboard_plan_delete_api(request):
-    _ensure_browser_close_session(request)
-
-    payload = json.loads(request.body.decode("utf-8"))
-    plan_id = payload.get("plan_id")
-    actor = _get_actor(request)
-    snap_date_str = (payload.get("snap_date") or "").strip()
-    snap_date = datetime.strptime(snap_date_str, "%Y-%m-%d").date() if snap_date_str else None
-    date_block_response = _ensure_current_day_editable(snap_date)
-    if date_block_response is not None:
-        return date_block_response
-    lineid = (payload.get("lineid") or "").strip()
-    processid = (payload.get("processid") or "").strip()
-    stepseq = (payload.get("stepseq") or "").strip()
-    original_eqp_body_name = _normalize_upper(payload.get("original_eqp_body_name"))
-    original_eqp_cham_name = _normalize_upper(payload.get("original_eqp_cham_name"))
-
-    permission_response = _check_page_permission(
-        request,
-        "dashboard",
-        lineid=lineid,
-        processid=processid,
-        require_edit=True,
-        popup=True,
+    stage_codes = list(
+        FactsEvalStageMaster.objects.filter(is_active=True)
+        .order_by("sort_order", "stage_code")
+        .values_list("stage_code", flat=True)
     )
-    if permission_response is not None:
-        return permission_response
+    stage_formula = '"' + ",".join(stage_codes) + '"' if stage_codes else '""'
+    dv_stage = DataValidation(type="list", formula1=stage_formula, allow_blank=True)
 
-    if not plan_id:
-        return JsonResponse({"ok": False, "message": "삭제 대상 ID가 없습니다.", "received_id": plan_id, "expected_field": "plan_id"}, status=400)
+    dv_date = DataValidation(
+        type="date",
+        operator="between",
+        formula1="DATE(2020,1,1)",
+        formula2="DATE(2099,12,31)",
+        allow_blank=True,
+    )
+    dv_date.error = "날짜는 엑셀 날짜 형식으로 입력하십시오. 예: 2026-04-13"
+    dv_date.prompt = "호환완료계획일은 날짜 형식으로 입력"
 
-    obj = FactsStepPlan.objects.filter(id=plan_id, lineid=lineid, is_active=True).first()
-    if not obj and processid and stepseq and original_eqp_body_name:
-        obj = FactsStepPlan.objects.filter(
-            lineid=lineid,
-            processid=processid,
-            stepseq=stepseq,
-            eqp_body_name=original_eqp_body_name,
-            eqp_cham_name=original_eqp_cham_name,
-            is_active=True,
-        ).order_by("-updated_at", "-id").first()
-    if not obj and processid and stepseq:
-        candidates = FactsStepPlan.objects.filter(
-            lineid=lineid,
-            processid=processid,
-            stepseq=stepseq,
-            is_active=True,
-        ).order_by("-updated_at", "-id")
-        if candidates.count() == 1:
-            obj = candidates.first()
-    if not obj:
-        return JsonResponse({"ok": False, "message": "이미 삭제된 항목입니다.", "received_id": plan_id, "expected_field": "plan_id"}, status=200)
+    ws.add_data_validation(dv_always)
+    ws.add_data_validation(dv_major)
+    ws.add_data_validation(dv_action)
+    ws.add_data_validation(dv_stage)
+    ws.add_data_validation(dv_date)
 
-    before_json = _plan_to_json(obj)
-    obj.is_active = False
-    obj.updated_by = actor
-    obj.save()
+    dv_action.add("D2:D5000")
+    dv_always.add("F2:F5000")
+    dv_major.add("G2:G5000")
+    dv_stage.add("L2:L5000")
+    dv_date.add("J2:J5000")
+    dv_action.add("N2:N5000")
+    dv_always.add("P2:P5000")
+    dv_major.add("Q2:Q5000")
 
-    FactsEditHistory.objects.create(
-        action_type="plan_delete",
-        snap_date=snap_date,
-        lineid=lineid,
-        processid=obj.processid,
-        stepseq=obj.stepseq,
-        recipeid=obj.recipeid or "",
-        changed_by=actor,
-        before_json=before_json,
-        after_json={"deleted": True, "id": obj.id},
+    for row_idx in range(2, 5001):
+        ws[f"J{row_idx}"].number_format = "yyyy-mm-dd"
+
+    red_fill = PatternFill(
+        fill_type="solid",
+        start_color="FFC7CE",
+        end_color="FFC7CE",
     )
 
-    rebuild_filter_cache_for_step(
-            snap_date=snap_date,
-            lineid=lineid,
-            processid=obj.processid,
-            stepseq=obj.stepseq,
-        )
+    line_col = get_column_letter(header_map["LINE"])
+    process_col = get_column_letter(header_map["PROCESSID"])
+    step_col = get_column_letter(header_map["STEPSEQ"])
+    plan_body_col = get_column_letter(header_map["호환계획_호환EQPBODY명"])
+    plan_cham_col = get_column_letter(header_map["호환계획_호환EQPCHAM명"])
+    tip_body_col = get_column_letter(header_map["미등록TIP호환Path_호환EQPBODY명"])
+    tip_cham_col = get_column_letter(header_map["미등록TIP호환Path_호환EQPCHAM명"])
 
-    _invalidate_dashboard_graph_cache_for_snap_date(snap_date)
-    cache.clear()
-    return JsonResponse({"ok": True})
-
-@require_GET
-@login_required
-def dashboard_tip_missing_detail_api(request):
-    _ensure_browser_close_session(request)
-    permission_response = _check_page_permission(request, "dashboard", ignore_blank_scope=True)
-    if permission_response is not None:
-        return permission_response
-
-
-    snap_date_str = request.GET.get("snap_date", "").strip()
-    lineid = request.GET.get("lineid", "").strip()
-    processid = request.GET.get("processid", "").strip()
-    stepseq = request.GET.get("stepseq", "").strip()
-
-    if not snap_date_str:
-        return JsonResponse({"ok": False, "message": "기준일이 없습니다."}, status=400)
-
-    scope_response = _check_page_permission(request, "dashboard", lineid=lineid, processid=processid, popup=True)
-    if scope_response is not None:
-        return scope_response
-
-    snap_date = datetime.strptime(snap_date_str, "%Y-%m-%d").date()
-    rows = services.get_tip_missing_detail_rows_as_of(snap_date, lineid, processid, stepseq)
-    if str(request.GET.get("debug_prp_table") or "").strip() == "1":
-        summary_map = services._build_tip_missing_summary_map(snap_date, [(lineid, processid, stepseq)], as_of_date=snap_date)
-        summary_rows = summary_map.get(services._step_group_key(lineid, processid, stepseq), {})
-        detail_keys = {(str(r.get("lineid") or lineid), str(processid), str(stepseq), str(r.get("eqp_body_name") or ""), str(r.get("eqp_cham_name") or ""), str(r.get("always_emergency") or ""), str(r.get("major_minor") or ""), "tip_missing", str(r.get("tip_missing_id") or r.get("id") or "")) for r in rows}
-        lines = [
-            f"tip_missing_detail_rows={rows}",
-            f"tip_missing_summary_rows={summary_rows}",
-            f"detail-only rows={sorted(detail_keys)}",
-            "payload_type=tip_missing",
-        ]
-        try_save_feedback_log("prp_table_tip_detail_debug", "\n".join(lines), "PRP_TABLE_TIP_DETAIL_DEBUG")
-
-    return JsonResponse({
-        "ok": True,
-        "rows": rows,
-    })
-
-@require_POST
-@login_required
-def dashboard_tip_missing_save_api(request):
-    _ensure_browser_close_session(request)
-
-    payload = json.loads(request.body.decode("utf-8"))
-    snap_date = datetime.strptime(payload["snap_date"], "%Y-%m-%d").date()
-    date_block_response = _ensure_current_day_editable(snap_date)
-    if date_block_response is not None:
-        return date_block_response
-    items = payload.get("items", [])
-    actor = _get_actor(request)
-    lineid = (payload.get("lineid") or "").strip()
-    first_processid = (items[0].get("processid") if items else "") or ""
-    permission_response = _check_page_permission(request, "dashboard", lineid=lineid, processid=first_processid, require_edit=True, popup=True)
-    if permission_response is not None:
-        return permission_response
-
-    always_emergency = (payload.get("always_emergency") or "").strip()
-    major_minor = (payload.get("major_minor") or "").strip()
-    eqp_body_name = _normalize_upper(payload.get("eqp_body_name"))
-    eqp_cham_name = _normalize_upper(payload.get("eqp_cham_name"))
-    tip_missing_id = payload.get("tip_missing_id")
-
-    if not always_emergency:
-        return JsonResponse({"ok": False, "message": "상시/비상시는 필수기재입니다."}, status=400)
-    if not major_minor:
-        return JsonResponse({"ok": False, "message": "주요/비주요는 필수기재입니다."}, status=400)
-    if not eqp_body_name:
-        return JsonResponse({"ok": False, "message": "호환EQPBODY명은 필수기재입니다."}, status=400)
-    if not items:
-        return JsonResponse({"ok": False, "message": "대상 step이 없습니다."}, status=400)
-
-    for item in items:
-        item_lineid = (item.get("lineid") or lineid or "").strip()
-        processid = item["processid"]
-        stepseq = item["stepseq"]
-
-        if tip_missing_id:
-            obj = FactsTipMissingCompatPath.objects.filter(
-                id=tip_missing_id,
-                lineid=item_lineid,
-                processid=processid,
-                stepseq=stepseq,
-                is_active=True,
-            ).first()
-            if not obj:
-                return JsonResponse({"ok": False, "message": "수정 대상 미등록TIP호환Path가 없습니다."}, status=404)
-
-            before_json = _tip_missing_to_json(obj)
-            obj.always_emergency = always_emergency
-            obj.major_minor = major_minor
-            obj.eqp_body_name = eqp_body_name
-            obj.eqp_cham_name = eqp_cham_name
-            obj.updated_by = actor
-            obj.save()
-
-            FactsEditHistory.objects.create(
-                action_type="tip_missing_update",
-                snap_date=snap_date,
-                lineid=item_lineid,
-                processid=processid,
-                stepseq=stepseq,
-                recipeid=obj.recipeid or "",
-                changed_by=actor,
-                before_json=before_json,
-                after_json=_tip_missing_to_json(obj),
-            )
-        else:
-            obj = FactsTipMissingCompatPath.objects.create(
-                snap_date=snap_date,
-                lineid=item_lineid,
-                processid=processid,
-                stepseq=stepseq,
-                recipeid="",
-                always_emergency=always_emergency,
-                major_minor=major_minor,
-                eqp_body_name=eqp_body_name,
-                eqp_cham_name=eqp_cham_name,
-                is_active=True,
-                created_by=actor,
-                updated_by=actor,
-            )
-
-            FactsEditHistory.objects.create(
-                action_type="tip_missing_add",
-                snap_date=snap_date,
-                lineid=item_lineid,
-                processid=processid,
-                stepseq=stepseq,
-                recipeid="",
-                changed_by=actor,
-                before_json={},
-                after_json=_tip_missing_to_json(obj),
-            )
-
-    rebuild_targets = {
-            (
-                snap_date,
-                (item.get("lineid") or lineid or "").strip(),
-                (item.get("processid") or "").strip(),
-                (item.get("stepseq") or "").strip(),
-            )
-            for item in items
-            if (item.get("processid") or "").strip() and (item.get("stepseq") or "").strip()
-        }
-
-    for target_snap_date, target_lineid, target_processid, target_stepseq in rebuild_targets:
-        rebuild_filter_cache_for_step(
-            snap_date=target_snap_date,
-            lineid=target_lineid,
-            processid=target_processid,
-            stepseq=target_stepseq,
-        )
-
-    _invalidate_dashboard_graph_cache_for_snap_date(snap_date)
-    cache.clear()
-    return JsonResponse({"ok": True})
-
-@require_POST
-@login_required
-def dashboard_tip_missing_delete_api(request):
-    _ensure_browser_close_session(request)
-
-    payload = json.loads(request.body.decode("utf-8"))
-    tip_missing_id = payload.get("tip_missing_id")
-    actor = _get_actor(request)
-    snap_date_str = (payload.get("snap_date") or "").strip()
-    snap_date = datetime.strptime(snap_date_str, "%Y-%m-%d").date() if snap_date_str else None
-    date_block_response = _ensure_current_day_editable(snap_date)
-    if date_block_response is not None:
-        return date_block_response
-    lineid = (payload.get("lineid") or "").strip()
-    processid = (payload.get("processid") or "").strip()
-
-    permission_response = _check_page_permission(
-        request,
-        "dashboard",
-        lineid=lineid,
-        processid=processid,
-        require_edit=True,
-        popup=True,
-    )
-    if permission_response is not None:
-        return permission_response
-
-    if not tip_missing_id:
-        return JsonResponse({"ok": False, "message": "삭제 대상 ID가 없습니다.", "received_id": tip_missing_id, "expected_field": "tip_missing_id"}, status=400)
-
-    obj = FactsTipMissingCompatPath.objects.filter(id=tip_missing_id, lineid=lineid, is_active=True).first()
-    if not obj:
-        return JsonResponse({"ok": False, "message": "이미 삭제된 항목입니다.", "received_id": tip_missing_id, "expected_field": "tip_missing_id"}, status=200)
-
-    before_json = _tip_missing_to_json(obj)
-    obj.is_active = False
-    obj.updated_by = actor
-    obj.save()
-
-    FactsEditHistory.objects.create(
-        action_type="tip_missing_delete",
-        snap_date=obj.snap_date,
-        lineid=lineid,
-        processid=obj.processid,
-        stepseq=obj.stepseq,
-        recipeid=obj.recipeid or "",
-        changed_by=actor,
-        before_json=before_json,
-        after_json={"deleted": True, "id": obj.id},
-    )
-
-    rebuild_filter_cache_for_step(
-            snap_date=obj.snap_date,
-            lineid=lineid,
-            processid=obj.processid,
-            stepseq=obj.stepseq,
-        )
-
-    _invalidate_dashboard_graph_cache_for_snap_date(obj.snap_date)
-    cache.clear()
-    return JsonResponse({"ok": True})
-
-@require_GET
-@login_required
-def dashboard_similar_eqp_api(request):
-    _ensure_browser_close_session(request)
-    permission_response = _check_page_permission(request, "dashboard", ignore_blank_scope=True)
-    if permission_response is not None:
-        return permission_response
-
-    snap_date_str = request.GET.get("snap_date", "").strip()
-    lineid = request.GET.get("lineid", "").strip()
-    processid = request.GET.get("processid", "").strip()
-    stepseq = request.GET.get("stepseq", "").strip()
-
-    if not snap_date_str:
-        return JsonResponse({"ok": False, "message": "기준일이 없습니다."}, status=400)
-    if not processid or not stepseq:
-        return JsonResponse({"ok": False, "message": "processid 또는 stepseq가 없습니다."}, status=400)
-
-    scope_response = _check_page_permission(request, "dashboard", lineid=lineid, processid=processid, popup=True)
-    if scope_response is not None:
-        return scope_response
-
-    snap_date = datetime.strptime(snap_date_str, "%Y-%m-%d").date()
-
-    result = services.get_similar_model_eqp_candidates(
-        snap_date=snap_date,
-        processid=processid,
-        stepseq=stepseq,
-        include_current=False,
-    )
-
-    rows = []
-    for row in result["recommendations"]:
-        origin_line_id = row.get("origin_line_id", "")
-        line_obj = FactsLineMaster.objects.filter(line_id=origin_line_id, is_active=True).first()
-
-        if line_obj and line_obj.line_name:
-            display_location = f"{line_obj.line_name}({line_obj.line_id})"
-        else:
-            display_location = origin_line_id
-
-        rows.append({
-            "eqp_id": row.get("eqp_id", ""),
-            "origin_line_id": display_location,
-            "eqp_model": row.get("eqp_model", ""),
-            "match_type": row.get("match_type", ""),
-            "match_score": row.get("match_score", ""),
-            "matched_base_model": row.get("matched_base_model", ""),
-        })
-
-    return JsonResponse({
-        "ok": True,
-        "base_eqps": result["base_eqps"],
-        "base_models": result["base_models"],
-        "rows": rows,
-        "notice": "해당 추천은 GPM 등록된 EQP_MODEL을 기준으로 합니다.",
-    })
-
-def _is_invalid_single_cham_value(value):
-    s = str(value or "").strip().upper()
-    if not s:
-        return False
-    if any(sep in s for sep in [":", ";", ","]):
-        return True
-    if len(s) > 1:
-        return True
-    return False
-
-@require_POST
-@login_required
-def dashboard_bulk_upload_api(request):
-    _ensure_browser_close_session(request)
-
-    upload = request.FILES.get("file")
-    snap_date_str = request.POST.get("snap_date")
-    request_lineid = (request.POST.get("lineid") or "").strip()
-    request_processid = (request.POST.get("processid") or request.POST.get("prp_processid") or "").strip()
-    actor = _get_actor(request)
-
-    # 최초 진입 권한검사는 빈 scope 허용
-    permission_response = _check_page_permission(
-        request,
-        "dashboard",
-        lineid=request_lineid,
-        processid=request_processid,
-        require_edit=True,
-        popup=True,
-        ignore_blank_scope=True,
-    )
-    if permission_response is not None:
-        return permission_response
-
-    if not upload or not snap_date_str:
-        return JsonResponse({"ok": False, "message": "파일과 기준일이 필요합니다."}, status=400)
-
-    snap_date = datetime.strptime(snap_date_str, "%Y-%m-%d").date()
-    name = upload.name.lower()
-    rows = []
-
-    if name.endswith(".csv"):
-        content = upload.read().decode("utf-8-sig")
-        reader = csv.DictReader(io.StringIO(content))
-        for row_no, row in enumerate(reader, start=2):
-            item = dict(row)
-            item["__rownum__"] = row_no
-            rows.append(item)
-    elif name.endswith(".xlsx"):
-        wb = load_workbook(upload, data_only=True)
-        ws = wb["FACTS_UPLOAD_TEMPLATE"] if "FACTS_UPLOAD_TEMPLATE" in wb.sheetnames else wb.active
-        header = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
-
-        for excel_row_no, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-            item = {}
-            for idx, key in enumerate(header):
-                item[key] = row[idx] if idx < len(row) else None
-            item["__rownum__"] = excel_row_no
-            rows.append(item)
-    else:
-        return JsonResponse({"ok": False, "message": "csv 또는 xlsx만 업로드 가능합니다."}, status=400)
-
-    stage_map = {
-        s.stage_code: s
-        for s in FactsEvalStageMaster.objects.filter(is_active=True)
+    # -------------------------------------------------
+    # 숨김 helper 컬럼
+    # AA: 호환계획 중복 key
+    # AB: TIP미등록 중복 key
+    # AC: 호환EQPCHAM명 유효성
+    # AD: 미등록TIP호환Path_호환EQPCHAM명 유효성
+    # -------------------------------------------------
+    helper_cols = {
+        "plan_dup_key": "AA",
+        "tip_dup_key": "AB",
+        "plan_cham_invalid": "AC",
+        "tip_cham_invalid": "AD",
     }
 
-    seen_plan_keys = set()
-    seen_tip_missing_keys = set()
+    ws["AA1"] = "PLAN_DUP_KEY"
+    ws["AB1"] = "TIP_DUP_KEY"
+    ws["AC1"] = "PLAN_CHAM_INVALID"
+    ws["AD1"] = "TIP_CHAM_INVALID"
 
-    plan_created = 0
-    plan_updated = 0
-    plan_deleted = 0
-    tip_created = 0
-    tip_updated = 0
-    tip_deleted = 0
-    skipped_duplicate_in_file = 0
-    skipped_invalid_cham = 0
-    skipped_permission_denied = 0
-    skipped_missing_required = 0
-    skipped_invalid_action = 0
-
-    rebuild_scope_targets = set()
-
-    for r in rows:
-        row_lineid = _normalize_upper(r.get("LINE")) or _normalize_upper(request_lineid)
-        row_processid = _normalize_upper(r.get("PROCESSID"))
-        row_stepseq = _normalize_upper(r.get("STEPSEQ"))
-
-        plan_always = str(r.get("호환계획_상시/비상시") or "").strip()
-        plan_major = str(r.get("호환계획_주요/비주요") or "").strip()
-        plan_body = _normalize_upper(r.get("호환계획_호환EQPBODY명"))
-        plan_cham = _normalize_upper(r.get("호환계획_호환EQPCHAM명"))
-        plan_due = _normalize_date_input(r.get("호환계획_호환완료계획일"))
-        eval_lot_id = _normalize_upper(r.get("호환계획_평가LotID"))
-        stage_code = _normalize_upper(r.get("호환계획_평가단계"))
-        memo = str(r.get("호환계획_비고") or "").strip()
-        plan_action = _normalize_upper(r.get("호환계획_ACTION")) or "UPSERT"
-        plan_id = str(r.get("호환계획_ID") or "").strip()
-
-        tip_missing_always = str(r.get("미등록TIP호환Path_상시/비상시") or "").strip()
-        tip_missing_major = str(r.get("미등록TIP호환Path_주요/비주요") or "").strip()
-        tip_missing_body = _normalize_upper(r.get("미등록TIP호환Path_호환EQPBODY명"))
-        tip_missing_cham = _normalize_upper(r.get("미등록TIP호환Path_호환EQPCHAM명"))
-        tip_action = _normalize_upper(r.get("미등록TIP호환Path_ACTION")) or "UPSERT"
-        tip_id = str(r.get("미등록TIP호환Path_ID") or "").strip()
-
-        if not row_lineid or not row_processid or not row_stepseq:
-            skipped_missing_required += 1
-            continue
-
-        row_permission_response = _check_page_permission(
-            request,
-            "dashboard",
-            lineid=row_lineid,
-            processid=row_processid,
-            require_edit=True,
-            popup=True,
-        )
-        if row_permission_response is not None:
-            skipped_permission_denied += 1
-            continue
-
-        rebuild_scope_targets.add((snap_date, row_lineid, row_processid, row_stepseq))
-
-        plan_cham_invalid = (plan_action == "UPSERT") and _is_invalid_single_cham_value(plan_cham)
-        tip_cham_invalid = (tip_action == "UPSERT") and _is_invalid_single_cham_value(tip_missing_cham)
-
-        if plan_cham_invalid or tip_cham_invalid:
-            skipped_invalid_cham += 1
-            continue
-
-        if plan_action not in {"UPSERT", "DELETE"} or tip_action not in {"UPSERT", "DELETE"}:
-            skipped_invalid_action += 1
-            continue
-
-        if plan_body or plan_id:
-            plan_key = (plan_action, plan_id, row_lineid, row_processid, row_stepseq, plan_body, plan_cham)
-            if plan_key in seen_plan_keys:
-                skipped_duplicate_in_file += 1
-            else:
-                seen_plan_keys.add(plan_key)
-                stage_obj = stage_map.get(stage_code) if stage_code else None
-
-                existing_qs = FactsStepPlan.objects.filter(
-                    lineid=row_lineid,
-                    processid=row_processid,
-                    stepseq=row_stepseq,
-                    is_active=True,
-                )
-                if plan_id:
-                    existing_qs = existing_qs.filter(id=plan_id)
-                else:
-                    existing_qs = existing_qs.filter(eqp_body_name=plan_body, eqp_cham_name=plan_cham)
-                existing_qs = existing_qs.order_by("-updated_at", "-id")
-                obj = existing_qs.first()
-
-                if plan_action == "DELETE":
-                    if obj:
-                        before_json = _plan_to_json(obj)
-                        obj.is_active = False
-                        obj.updated_by = actor
-                        obj.save(update_fields=["is_active", "updated_by", "updated_at"])
-                        FactsEditHistory.objects.create(
-                            action_type="plan_delete",
-                            snap_date=snap_date,
-                            lineid=row_lineid,
-                            processid=row_processid,
-                            stepseq=row_stepseq,
-                            recipeid=obj.recipeid or "",
-                            changed_by=actor,
-                            before_json=before_json,
-                            after_json={"id": obj.id, "is_active": False},
-                        )
-                        plan_deleted += 1
-                elif obj:
-                    before_json = _plan_to_json(obj)
-                    existing_qs.exclude(id=obj.id).update(is_active=False, updated_by=actor)
-                    obj.always_emergency = plan_always
-                    obj.major_minor = plan_major
-                    obj.compatibility_due_date = plan_due
-                    obj.eval_lot_id = eval_lot_id
-                    obj.required_eval_stage = stage_obj
-                    obj.memo = memo
-                    obj.updated_by = actor
-                    obj.save()
-                    FactsEditHistory.objects.create(
-                        action_type="plan_update",
-                        snap_date=snap_date,
-                        lineid=row_lineid,
-                        processid=row_processid,
-                        stepseq=row_stepseq,
-                        recipeid=obj.recipeid or "",
-                        changed_by=actor,
-                        before_json=before_json,
-                        after_json=_plan_to_json(obj),
-                    )
-                    plan_updated += 1
-                else:
-                    obj = FactsStepPlan.objects.create(
-                        lineid=row_lineid, processid=row_processid, stepseq=row_stepseq, recipeid="",
-                        always_emergency=plan_always, major_minor=plan_major, eqp_body_name=plan_body,
-                        eqp_cham_name=plan_cham, compatibility_due_date=plan_due, eval_lot_id=eval_lot_id,
-                        required_eval_stage=stage_obj, memo=memo, is_active=True, created_by=actor, updated_by=actor,
-                    )
-                    FactsEditHistory.objects.create(
-                        action_type="plan_add", snap_date=snap_date, lineid=row_lineid, processid=row_processid,
-                        stepseq=row_stepseq, recipeid="", changed_by=actor, before_json={}, after_json=_plan_to_json(obj),
-                    )
-                    plan_created += 1
-
-        if tip_missing_body or tip_id:
-            tip_key = (tip_action, tip_id, snap_date, row_lineid, row_processid, row_stepseq, tip_missing_body, tip_missing_cham)
-            if tip_key in seen_tip_missing_keys:
-                skipped_duplicate_in_file += 1
-            else:
-                seen_tip_missing_keys.add(tip_key)
-
-                existing_tip_qs = FactsTipMissingCompatPath.objects.filter(
-                    snap_date=snap_date,
-                    lineid=row_lineid,
-                    processid=row_processid,
-                    stepseq=row_stepseq,
-                    is_active=True,
-                )
-                if tip_id:
-                    existing_tip_qs = existing_tip_qs.filter(id=tip_id)
-                else:
-                    existing_tip_qs = existing_tip_qs.filter(eqp_body_name=tip_missing_body, eqp_cham_name=tip_missing_cham)
-                existing_tip_qs = existing_tip_qs.order_by("-updated_at", "-id")
-
-                obj2 = existing_tip_qs.first()
-                if tip_action == "DELETE":
-                    if obj2:
-                        before_json = _tip_missing_to_json(obj2)
-                        obj2.is_active = False
-                        obj2.updated_by = actor
-                        obj2.save(update_fields=["is_active", "updated_by", "updated_at"])
-                        FactsEditHistory.objects.create(
-                            action_type="tip_missing_delete",
-                            snap_date=snap_date,
-                            lineid=row_lineid,
-                            processid=row_processid,
-                            stepseq=row_stepseq,
-                            recipeid=obj2.recipeid or "",
-                            changed_by=actor,
-                            before_json=before_json,
-                            after_json={"id": obj2.id, "is_active": False},
-                        )
-                        tip_deleted += 1
-                elif obj2:
-                    before_json = _tip_missing_to_json(obj2)
-
-                    existing_tip_qs.exclude(id=obj2.id).update(
-                        is_active=False,
-                        updated_by=actor,
-                    )
-
-                    obj2.always_emergency = tip_missing_always
-                    obj2.major_minor = tip_missing_major
-                    obj2.updated_by = actor
-                    obj2.save()
-
-                    FactsEditHistory.objects.create(
-                        action_type="tip_missing_update",
-                        snap_date=snap_date,
-                        lineid=row_lineid,
-                        processid=row_processid,
-                        stepseq=row_stepseq,
-                        recipeid=obj2.recipeid or "",
-                        changed_by=actor,
-                        before_json=before_json,
-                        after_json=_tip_missing_to_json(obj2),
-                    )
-                    tip_updated += 1
-                else:
-                    obj2 = FactsTipMissingCompatPath.objects.create(
-                        snap_date=snap_date,
-                        lineid=row_lineid,
-                        processid=row_processid,
-                        stepseq=row_stepseq,
-                        recipeid="",
-                        always_emergency=tip_missing_always,
-                        major_minor=tip_missing_major,
-                        eqp_body_name=tip_missing_body,
-                        eqp_cham_name=tip_missing_cham,
-                        is_active=True,
-                        created_by=actor,
-                        updated_by=actor,
-                    )
-
-                    FactsEditHistory.objects.create(
-                        action_type="tip_missing_add",
-                        snap_date=snap_date,
-                        lineid=row_lineid,
-                        processid=row_processid,
-                        stepseq=row_stepseq,
-                        recipeid="",
-                        changed_by=actor,
-                        before_json={},
-                        after_json=_tip_missing_to_json(obj2),
-                    )
-                    tip_created += 1
-
-    for target_snap_date, target_lineid, target_processid, target_stepseq in rebuild_scope_targets:
-        rebuild_filter_cache_for_step(
-            snap_date=target_snap_date,
-            lineid=target_lineid,
-            processid=target_processid,
-            stepseq=target_stepseq,
+    for row_idx in range(2, 5001):
+        # CHAM이 비어 있으면 BODY까지만 key로 생성
+        ws[f"AA{row_idx}"] = (
+            f'=IF(TRIM(${plan_body_col}{row_idx})="", "", '
+            f'UPPER(TRIM(${line_col}{row_idx}))&"|"&'
+            f'UPPER(TRIM(${process_col}{row_idx}))&"|"&'
+            f'UPPER(TRIM(${step_col}{row_idx}))&"|"&'
+            f'UPPER(TRIM(${plan_body_col}{row_idx}))&"|"&'
+            f'UPPER(TRIM(${plan_cham_col}{row_idx})))'
         )
 
-    _invalidate_dashboard_graph_cache_for_snap_date(snap_date)
-    cache.clear()
+        ws[f"AB{row_idx}"] = (
+            f'=IF(TRIM(${tip_body_col}{row_idx})="", "", '
+            f'UPPER(TRIM(${line_col}{row_idx}))&"|"&'
+            f'UPPER(TRIM(${process_col}{row_idx}))&"|"&'
+            f'UPPER(TRIM(${step_col}{row_idx}))&"|"&'
+            f'UPPER(TRIM(${tip_body_col}{row_idx}))&"|"&'
+            f'UPPER(TRIM(${tip_cham_col}{row_idx})))'
+        )
 
-    return JsonResponse({
-        "ok": True,
-        "message": (
-            f"업로드 완료. "
-            f"호환계획 신규 {plan_created}건, 수정 {plan_updated}건, 삭제 {plan_deleted}건, "
-            f"TIP미등록 호환Path 신규 {tip_created}건, 수정 {tip_updated}건, 삭제 {tip_deleted}건, "
-            f"동일 파일 내 중복으로 스킵 {skipped_duplicate_in_file}건, "
-            f"ACTION 값 오류로 스킵 {skipped_invalid_action}건, "
-            f"CHAM 입력 오류로 스킵 {skipped_invalid_cham}건, "
-            f"필수값 누락으로 스킵 {skipped_missing_required}건, "
-            f"권한 부족으로 스킵 {skipped_permission_denied}건"
+        ws[f"AC{row_idx}"] = (
+            f'=IF(TRIM(${plan_cham_col}{row_idx})="", FALSE, '
+            f'OR(ISNUMBER(SEARCH(":",${plan_cham_col}{row_idx})),'
+            f'ISNUMBER(SEARCH(";",${plan_cham_col}{row_idx})),'
+            f'ISNUMBER(SEARCH(",",${plan_cham_col}{row_idx})),'
+            f'LEN(TRIM(${plan_cham_col}{row_idx}))>1))'
+        )
+
+        ws[f"AD{row_idx}"] = (
+            f'=IF(TRIM(${tip_cham_col}{row_idx})="", FALSE, '
+            f'OR(ISNUMBER(SEARCH(":",${tip_cham_col}{row_idx})),'
+            f'ISNUMBER(SEARCH(";",${tip_cham_col}{row_idx})),'
+            f'ISNUMBER(SEARCH(",",${tip_cham_col}{row_idx})),'
+            f'LEN(TRIM(${tip_cham_col}{row_idx}))>1))'
+        )
+
+    # helper 컬럼 숨김
+    for col in ["AA", "AB", "AC", "AD"]:
+        ws.column_dimensions[col].hidden = True
+
+    # -------------------------------------------------
+    # 조건부서식
+    # -------------------------------------------------
+
+    # 1) 호환계획 중복 경고 (BODY만 있어도 key 생성되므로 잡힘)
+    ws.conditional_formatting.add(
+        f"{plan_body_col}2:{plan_cham_col}5000",
+        FormulaRule(
+            formula=['=AND($AA2<>"",COUNTIF($AA:$AA,$AA2)>1)'],
+            fill=red_fill,
         ),
-    })
+    )
+
+    # 2) TIP미등록 중복 경고
+    ws.conditional_formatting.add(
+        f"{tip_body_col}2:{tip_cham_col}5000",
+        FormulaRule(
+            formula=['=AND($AB2<>"",COUNTIF($AB:$AB,$AB2)>1)'],
+            fill=red_fill,
+        ),
+    )
+
+    # 3) STEPSEQ 소문자 경고
+    ws.conditional_formatting.add(
+        f"{step_col}2:{step_col}5000",
+        FormulaRule(
+            formula=[f'=AND(${step_col}2<>"",EXACT(${step_col}2,UPPER(${step_col}2))=FALSE)'],
+            fill=red_fill,
+        ),
+    )
+
+    # 4) 호환EQPCHAM명 다중입력/1글자초과 경고
+    ws.conditional_formatting.add(
+        f"{plan_cham_col}2:{plan_cham_col}5000",
+        FormulaRule(
+            formula=['=$AC2=TRUE'],
+            fill=red_fill,
+        ),
+    )
+
+    # 5) 미등록TIP호환Path_호환EQPCHAM명 다중입력/1글자초과 경고
+    ws.conditional_formatting.add(
+        f"{tip_cham_col}2:{tip_cham_col}5000",
+        FormulaRule(
+            formula=['=$AD2=TRUE'],
+            fill=red_fill,
+        ),
+    )
+
+    guide_ws = wb.create_sheet("작성 참고")
+    guide_ws["A1"] = "FACTS 엑셀 업로드 작성 참고"
+    guide_ws["A1"].font = Font(bold=True, size=13)
+
+    guide_rows = [
+        "1. 업로드는 FACTS_UPLOAD_TEMPLATE 시트만 읽습니다.",
+        "2. 동일 파일 내에서 같은 설비가 중복되면 행번호가 더 작은 행만 반영됩니다.",
+        "3. ACTION은 UPSERT/DELETE 중 선택합니다. 기본값은 UPSERT입니다.",
+        "4. *_ID 값이 있으면 ID 기준으로 수정/삭제하고, 없으면 자연키(line/process/step/body/cham) 기준으로 처리합니다.",
+        "5. 같은 설비가 기존 DB에 이미 있으면 새 업로드 값으로 덮어씌웁니다.",
+        "6. LINE컬럼은 필수입니다.",
+        "7. 중복 경고 기준",
+        "   - 호환계획: PROCESSID + STEPSEQ + 호환계획_호환EQPBODY명 + 호환계획_호환EQPCHAM명",
+        "   - TIP미등록: PROCESSID + STEPSEQ + 미등록TIP호환Path_호환EQPBODY명 + 미등록TIP호환Path_호환EQPCHAM명",
+        "8. CHAM명은 비어 있을 수 있으며, 비어 있어도 BODY 기준으로 중복 경고가 동작합니다.",
+        "9. PROCESSID, STEPSEQ, 호환계획_호환EQPBODY명, 호환계획_호환EQPCHAM명, 호환계획_평가LotID, 미등록TIP호환Path_호환EQPBODY명, 미등록TIP호환Path_호환EQPCHAM명은 업로드 시 서버에서 영문자를 무조건 대문자로 변환합니다.",
+        "10. 하나의 행에는 하나의 CHAM단위까지만 기입 가능합니다. 하나 이상의 CHAM 기입(예시: 3:4, 3;4, 3,4 등) 된 행은 업데이트가 안됩니다.",
+        "11. 호환계획_호환EQPCHAM명, 미등록TIP호환Path_호환EQPCHAM명 컬럼에 다중 CHAM 형식 또는 1글자 초과가 입력되면 빨간색 warning으로 표시됩니다.",
+        "12. STEPSEQ에 소문자가 입력되면 빨간색 warning으로 표시됩니다.",
+    ]
+
+    for idx, text in enumerate(guide_rows, start=3):
+        guide_ws[f"A{idx}"] = text
+
+    guide_ws.column_dimensions["A"].width = 140
+
+    wb.calculation.calcMode = "auto"
+    wb.calculation.fullCalcOnLoad = True
+    wb.calculation.forceFullCalc = True
+    
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="facts_upload_template.xlsx"'
+    return response
+
+@require_GET
+@login_required
+def prp_export_csv(request):
+    _ensure_browser_close_session(request)
+    permission_response = _check_page_permission(request, "dashboard", ignore_blank_scope=True)
+    if permission_response is not None:
+        return permission_response
+
+    prp_f = _get_prp_common_filters(request)
+    prp_filters = _get_prp_request_filters(request)
+
+    is_valid, msg = _validate_prp_filters(prp_filters)
+    if not is_valid:
+        return HttpResponse(msg, content_type="text/plain; charset=utf-8", status=400)
+
+    prp_base_rows = _get_prp_base_rows(prp_f, prp_filters)
+    prp_rows = _extract_prp_rows(prp_base_rows, source="prp_export_csv")
+    step_rows = _apply_prp_filters(prp_rows, prp_filters)
+    csv_text = services.export_prp_csv(step_rows)
+    written_row_count = len(step_rows)
+    written_counts_by_processid = {}
+    for row in step_rows:
+        processid = str((row or {}).get("processid") or "").strip()
+        if not processid:
+            continue
+        written_counts_by_processid[processid] = written_counts_by_processid.get(processid, 0) + 1
+    response = HttpResponse(csv_text, content_type="text/csv; charset=utf-8-sig")
+    response["Content-Disposition"] = 'attachment; filename="facts_prp_table_filtered.csv"'
+    return response
+
+@require_GET
+@login_required
+def prp_export_csv_all(request):
+    _ensure_browser_close_session(request)
+    permission_response = _check_page_permission(request, "dashboard", ignore_blank_scope=True)
+    if permission_response is not None:
+        return permission_response
+
+    prp_f = _get_prp_common_filters(request)
+    prp_filters = _get_prp_request_filters(request)
+    prp_lineid = (prp_filters.get("prp_lineid") or "").strip()
+    raw_get_prp_processid = request.GET.get("prp_processid")
+    raw_getlist_prp_processid = request.GET.getlist("prp_processid")
+
+    selected_prps = []
+    seen_prps = set()
+    for raw_value in raw_getlist_prp_processid:
+        for part in str(raw_value or "").split(","):
+            norm = part.strip()
+            if norm and norm not in seen_prps:
+                selected_prps.append(norm)
+                seen_prps.add(norm)
+
+    prp_processid = (prp_filters.get("prp_processid") or "").strip()
+    if prp_processid and prp_processid not in seen_prps:
+        selected_prps.append(prp_processid)
+        seen_prps.add(prp_processid)
+
+    if not prp_lineid:
+        return HttpResponse("LINE과 PRP를 선택한 뒤 조회 후 다운로드하세요.", content_type="text/plain; charset=utf-8", status=400)
+    if not selected_prps:
+        return HttpResponse("PRP조건은 필수입니다.", content_type="text/plain; charset=utf-8", status=400)
+    if len(selected_prps) > 20:
+        return HttpResponse("선택 PRP 다운로드는 최대 20개까지 가능합니다.", content_type="text/plain; charset=utf-8", status=400)
+
+    selected_set = {str(v or "").strip() for v in selected_prps if str(v or "").strip()}
+    prp_snap_date = prp_f.get("snap_date")
+    prp_area = (prp_filters.get("prp_areaname") or "").strip() or None
+    prp_layer = (prp_filters.get("prp_layerid") or "").strip() or None
+
+    merged_rows = []
+    dedupe_seen = set()
+    per_prp_build_kwargs = []
+    per_prp_row_count_before_filter = {}
+
+    for prp_code in selected_prps:
+        dataset_kwargs = {
+            "snap_date": prp_snap_date,
+            "lineid": prp_lineid or None,
+            "processid": prp_code,
+            "areaname": prp_area,
+            "layerid": prp_layer,
+            "include_measure": prp_f["include_measure"],
+            "include_emergency": prp_f["include_emergency"],
+            "exclude_skiprule_100": prp_f["exclude_skiprule_100"],
+            "tip_mode": prp_f["tip_mode"],
+            "for_prp_table": True,
+        }
+        per_prp_build_kwargs.append(dict(dataset_kwargs))
+        rows_for_prp = _extract_prp_rows(
+            services.build_step_dataset(**dataset_kwargs),
+            source=f"prp_export_csv_all:{prp_code}",
+        )
+        per_prp_row_count_before_filter[prp_code] = len(rows_for_prp)
+
+        for row in rows_for_prp:
+            if not isinstance(row, dict):
+                continue
+            row_key = (
+                str(row.get("lineid") or "").strip(),
+                str(row.get("processid") or "").strip(),
+                str(row.get("stepseq") or "").strip(),
+                str(row.get("recipeid") or "").strip(),
+                str(row.get("areaname") or "").strip(),
+                str(row.get("layerid") or "").strip(),
+            )
+            if row_key in dedupe_seen:
+                continue
+            dedupe_seen.add(row_key)
+            merged_rows.append(row)
+
+    rows_before_prp_filter = len(merged_rows)
+    step_rows = [
+        r for r in merged_rows
+        if isinstance(r, dict) and (str(r.get("processid") or "").strip() in selected_set)
+    ]
+    rows_after_prp_filter = len(step_rows)
+    selected_counts = {
+        prp_code: sum(1 for row in step_rows if isinstance(row, dict) and str(row.get("processid") or "").strip() == prp_code)
+        for prp_code in selected_prps
+    }
+    debug_payload = {
+        "raw_get_prp_processid": raw_get_prp_processid,
+        "raw_getlist_prp_processid": raw_getlist_prp_processid,
+        "selected_prps": selected_prps,
+        "selected_set": sorted(selected_set),
+        "per_prp_build_kwargs": per_prp_build_kwargs,
+        "per_prp_row_count_before_filter": per_prp_row_count_before_filter,
+        "merged_rows_count": rows_before_prp_filter,
+        "rows_after_prp_filter": rows_after_prp_filter,
+        "selected_counts": selected_counts,
+    }
+    logger.warning(
+        "[PRP_EXPORT_ALL] raw_get_prp_processid=%s raw_getlist_prp_processid=%s selected_prps=%s selected_set=%s per_prp_build_kwargs=%s per_prp_row_count_before_filter=%s merged_rows_count=%s rows_after_prp_filter=%s selected_counts=%s",
+        raw_get_prp_processid,
+        raw_getlist_prp_processid,
+        selected_prps,
+        sorted(selected_set),
+        per_prp_build_kwargs,
+        per_prp_row_count_before_filter,
+        rows_before_prp_filter,
+        rows_after_prp_filter,
+        selected_counts,
+    )
+    csv_text = services.export_prp_csv(step_rows)
+    written_row_count = len(step_rows)
+    written_counts_by_processid = {}
+    for row in step_rows:
+        processid = str((row or {}).get("processid") or "").strip()
+        if not processid:
+            continue
+        written_counts_by_processid[processid] = written_counts_by_processid.get(processid, 0) + 1
+    debug_payload["written_row_count"] = written_row_count
+    debug_payload["written_counts_by_processid"] = written_counts_by_processid
+    mismatch_processids = [
+        prp_code
+        for prp_code in selected_prps
+        if int(selected_counts.get(prp_code) or 0) != int(written_counts_by_processid.get(prp_code) or 0)
+    ]
+    if mismatch_processids:
+        logger.warning(
+            "[PRP_EXPORT_ALL] selected_counts/written_counts mismatch processids=%s selected_counts=%s written_counts_by_processid=%s",
+            mismatch_processids,
+            selected_counts,
+            written_counts_by_processid,
+        )
+    logger.warning("[PRP_EXPORT_DEBUG] %s", debug_payload)
+    print(f"[PRP_EXPORT_DEBUG] {debug_payload}")
+    debug_text = "\n".join([
+        f"selected_prps={selected_prps}",
+        f"selected_set={sorted(selected_set)}",
+        f"per_prp_build_kwargs={per_prp_build_kwargs}",
+        f"per_prp_row_count_before_filter={per_prp_row_count_before_filter}",
+        f"merged_rows_count={rows_before_prp_filter}",
+        f"rows_after_prp_filter={rows_after_prp_filter}",
+        f"selected_counts={selected_counts}",
+        f"written_row_count={written_row_count}",
+        f"written_counts_by_processid={written_counts_by_processid}",
+    ])
+    try_save_feedback_log(
+        f"prp_export_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        debug_text,
+        "PRP_EXPORT_DEBUG",
+    )
+    response = HttpResponse(csv_text, content_type="text/csv; charset=utf-8-sig")
+    snap_text = (prp_f.get("snap_date").strftime("%Y%m%d") if hasattr(prp_f.get("snap_date"), "strftime") else "unknown")
+    if len(selected_prps) == 1:
+        response["Content-Disposition"] = f'attachment; filename="facts_prp_table_all_{selected_prps[0]}.csv"'
+    else:
+        response["Content-Disposition"] = f'attachment; filename="FACTS_PRP_SELECTED_{snap_text}_{len(selected_prps)}PRP.csv"'
+    return response
+
+@require_GET
+@login_required
+def dashboard_prp_options_api(request):
+    _ensure_browser_close_session(request)
+    permission_response = _check_page_permission(request, "dashboard", ignore_blank_scope=True)
+    if permission_response is not None:
+        return permission_response
+
+    prp_f = _get_prp_common_filters(request)
+    prp_filters = _get_prp_request_filters(request)
+
+    payload = services.get_prp_filter_options_from_option_cache(
+        prp_filters=prp_filters,
+        fallback_snap_date=prp_f["snap_date"],
+    )
+    required_keys = [
+        "line_options",
+        "prp_options",
+        "area_options",
+        "layer_options",
+        "table_line_options",
+        "table_prp_options",
+        "table_area_options",
+        "table_layer_options",
+        "table_step_options",
+        "table_descript_options",
+        "table_recipe_options",
+        "table_type_options",
+        "table_body_options",
+        "table_cham_options",
+        "table_compat_options",
+        "table_always_options",
+        "table_major_options",
+        "table_plan_options",
+    ]
+    for key in required_keys:
+        payload.setdefault(key, [])
+    payload["line_options"] = payload.get("line_options") or payload.get("table_line_options") or []
+    payload["prp_options"] = payload.get("prp_options") or payload.get("table_prp_options") or []
+    payload["area_options"] = payload.get("area_options") or payload.get("table_area_options") or []
+    payload["layer_options"] = payload.get("layer_options") or payload.get("table_layer_options") or []
+    payload["ok"] = True
+    return JsonResponse(payload)
+
+@require_GET
+@login_required
+def dashboard_filter_options_api(request):
+    _ensure_browser_close_session(request)
+    permission_response = _check_page_permission(request, "dashboard", ignore_blank_scope=True)
+    if permission_response is not None:
+        return permission_response
+
+    f = _get_dashboard_common_filters(request)
+    payload = services.get_dashboard_filter_options_from_option_cache(
+        snap_date=f["snap_date"],
+        lineid=f["lineid"],
+        processid=f["processid"],
+        areaname=f["areaname"],
+        layer_values=f["layerid"],
+    )
+    payload["ok"] = True
+    return JsonResponse(payload)
