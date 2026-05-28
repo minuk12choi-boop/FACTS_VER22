@@ -1,0 +1,77 @@
+{% extends "facts/base.html" %}
+{% load static %}
+{% block content %}
+<div class="card" style="display:flex; flex-direction:column; gap:14px;">
+    <div class="card-header-row"><h3>PREVENT상태 TIP확인</h3></div>
+    <div class="filter-grid" style="grid-template-columns: repeat(8, minmax(120px, 1fr)); gap:10px; align-items:end;">
+        <div><label>기준일</label><input type="date" id="preventSnapDate" value="{{ snap_date|date:'Y-m-d' }}"></div>
+        <div><label>LINE</label><select id="preventLine"><option value="">전체</option>{% for v in line_options %}<option value="{{ v }}">{{ v }}</option>{% endfor %}</select></div>
+        <div><label>PRP</label><select id="preventPrp" class="dashboard-searchable-select" data-placeholder="PRP 검색 또는 선택"><option value="">전체</option>{% for v in prp_options %}<option value="{{ v }}">{{ v }}</option>{% endfor %}</select></div>
+        <div><label>AREA</label><select id="preventArea"><option value="">전체</option>{% for v in area_options %}<option value="{{ v }}">{{ v }}</option>{% endfor %}</select></div>
+        <div><label><input type="checkbox" id="preventIncludeMeasure" {% if include_measure %}checked{% endif %}> 계측포함</label></div>
+        <div><label><input type="checkbox" id="preventExcludeSkip100" {% if exclude_skiprule_100 %}checked{% endif %}> SKIPRULE 100 제외</label></div>
+        <div><label><input type="checkbox" id="preventTipMode" {% if tip_mode %}checked{% endif %}> TIP고려</label></div>
+        <div><button type="button" class="btn-primary btn-sm" id="preventSearchBtn">조회</button></div>
+    </div>
+    <div class="chart-wrap" style="height:420px; max-width:980px; margin:0 auto; width:100%; border:1px solid #d8e2f0; border-radius:12px; background:#fff; padding:10px; position:relative;"><canvas id="preventChart"></canvas><div id="preventChartGuide" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#5f7288; font-size:14px; pointer-events:none;">필터 선택 후 조회버튼을 눌러주세요.</div></div>
+    <div class="table-wrap" style="max-height:420px; overflow:auto;">
+        <table class="facts-table compact-facts-table"><thead><tr><th>LINE</th><th>PRP</th><th>AREA</th><th>STEP</th><th>RECIPE</th><th>TIP</th><th>EVENTTIME</th><th>경과일</th><th>구간</th></tr></thead><tbody id="preventTbody"><tr><td colspan="9" class="empty-cell">조회 버튼을 누르십시오.</td></tr></tbody></table>
+    </div>
+</div>
+{% endblock %}
+{% block script %}
+<script src="{% static 'facts/js/dashboard/filters.js' %}"></script>
+<script>
+(function(){
+ let chartInstance=null;
+ const searchBtn = document.getElementById('preventSearchBtn');
+ 
+async function refreshLinePrpOptions(changed){
+  const snapDate=document.getElementById('preventSnapDate')?.value||'';
+  const line=document.getElementById('preventLine')?.value||'';
+  const prp=document.getElementById('preventPrp')?.value||'';
+  const q=new URLSearchParams({snap_date:snapDate,lineid:line,processid:prp});
+  const res=await fetch(`/facts/prevent-tip/options-api/?${q.toString()}`);
+  const data=await res.json(); if(!data.ok) return;
+  const lineSel=document.getElementById('preventLine'); const prpSel=document.getElementById('preventPrp');
+  const lines=data.line_options||[]; const prps=data.prp_options||[];
+  lineSel.innerHTML='<option value="">전체</option>'+lines.map(v=>`<option value="${v}">${v}</option>`).join('');
+  prpSel.innerHTML='<option value="">전체</option>'+prps.map(v=>`<option value="${v}">${v}</option>`).join('');
+  lineSel.value = lines.includes(line) ? line : '';
+  prpSel.value = prps.includes(prp) ? prp : '';
+  if (window.FACTSDashboardFilters && window.FACTSDashboardFilters.refreshSelectOptions) {
+    window.FACTSDashboardFilters.refreshSelectOptions(lineSel, lines, true, false);
+    window.FACTSDashboardFilters.refreshSelectOptions(prpSel, prps, true, false);
+  }
+}
+async function loadData(){
+   if (searchBtn?.dataset.loading === '1') { return; }
+   if (searchBtn) { searchBtn.dataset.loading='1'; searchBtn.disabled = true; }
+   if (window.showGlobalLoading) { window.showGlobalLoading(); }
+   const params=new URLSearchParams({snap_date:document.getElementById('preventSnapDate').value,lineid:document.getElementById('preventLine').value,processid:document.getElementById('preventPrp').value,areaname:document.getElementById('preventArea').value,include_measure:document.getElementById('preventIncludeMeasure').checked ? '1' : '0',exclude_skiprule_100:document.getElementById('preventExcludeSkip100').checked ? '1' : '0',tip_mode:document.getElementById('preventTipMode').checked ? '1' : '0'});
+   try {
+   const res=await fetch('/facts/prevent-tip/data-api/?'+params.toString(),{credentials:'same-origin'});
+   const data=await res.json();
+   const tbody=document.getElementById('preventTbody');
+   const guide=document.getElementById('preventChartGuide');
+   tbody.innerHTML=(data.rows||[]).map(r=>`<tr><td>${r.lineid||''}</td><td>${r.processid||''}</td><td>${r.areaname||''}</td><td>${r.stepseq||''}</td><td>${r.recipeid||''}</td><td class="left-cell">${r.tip||''}</td><td>${r.eventtime||''}</td><td>${r.age_days}</td><td>${r.bucket}</td></tr>`).join('') || '<tr><td colspan="9" class="empty-cell">조회 결과가 없습니다.</td></tr>';
+   const ctx=document.getElementById('preventChart');
+   if(chartInstance){chartInstance.destroy();}
+   if(guide){guide.style.display='none';}
+   chartInstance=new Chart(ctx,{type:'bar',data:{labels:data.labels,datasets:data.datasets},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true,title:{display:true,text:'PREVENT 갯수'}}}}});
+   } catch (e) {
+      alert('조회 중 오류가 발생했습니다.');
+   } finally {
+      if (window.hideGlobalLoading) { window.hideGlobalLoading(); }
+      if (searchBtn) { searchBtn.dataset.loading='0'; searchBtn.disabled = false; }
+   }
+ }
+ document.getElementById('preventSearchBtn').addEventListener('click',loadData);
+ document.getElementById('preventSnapDate')?.addEventListener('change',()=>refreshLinePrpOptions('date'));
+ document.getElementById('preventLine')?.addEventListener('change',()=>refreshLinePrpOptions('line'));
+ document.getElementById('preventPrp')?.addEventListener('change',()=>refreshLinePrpOptions('prp'));
+ if (window.FACTSDashboardFilters && window.FACTSDashboardFilters.initDashboardDropdowns) { window.FACTSDashboardFilters.initDashboardDropdowns(document); }
+ refreshLinePrpOptions('init');
+})();
+</script>
+{% endblock %}
