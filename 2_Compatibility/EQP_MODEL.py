@@ -3,7 +3,7 @@ import bigdataquery as bdq
 import pandas as pd
 import pymysql
 from datetime import datetime
-from my_def_prp import *
+from my_def import *
 
 
 def smicdc_merge2():
