@@ -896,3 +896,306 @@ def smicdc_merge3():
 
 
     return df_final2
+
+
+def smicdc_merge4():
+
+    my_convert_type = True
+    my_verbose = True
+
+    steptip3 = """
+with
+                t as (SELECT DISTINCT
+                                        t.process, 
+                                        t.step, 
+                                        t.ppid, 
+                                        t.eqpid, 
+                                        (case when t.chamberid in ('-', 'MAIN') then 'MAIN' else chamberid end) as chamberid, 
+                        (case 
+                        when t.type='DOING' then 'DOING' 
+                        when t.type='PREVENT' AND IFNULL(t.checkcount,0)=0 then 'PREVENT' 
+                        when t.type='PREVENT' AND IFNULL(t.tkin_count,0)>=IFNULL(checkcount,0) then 'PREVENT' 
+                        when t.type='PREVENT' AND IFNULL(t.tkin_count,0)<IFNULL(checkcount,0) then 'DOING' 
+                        end) as prevent,
+                                        (case when t.chamberid is not null and t.chamberid not in ('MAIN', '-') then concat(t.eqpid,'-',chamberid) else t.eqpid end) as ee,
+                        t.eventtime
+                FROM mos_kh_smi.smicdc_nrdk_trackinprevent t
+                WHERE process in ('K7FE')
+                ),
+
+                tt as (SELECT
+                    t.*,
+                    (count(case when t.prevent = 'DOING' then t.prevent end) OVER (PARTITION BY t.process, t.step, t.ppid, t.ee)) as C,
+                    (count(t.ee) over (partition by t.process, t.step, t.ppid, t.ee)) as CC,
+                    (max(t.eventtime) over (partition by t.process, t.step, t.ppid, t.ee, t.prevent)) as M
+                        FROM t),
+
+                ttt as (SELECT 
+                * 
+                FROM tt
+                WHERE tt.cc>1 and tt.c>0 and tt.prevent='DOING' and tt.m=tt.eventtime
+                    OR tt.cc>1 and tt.c=0 and tt.m=tt.eventtime
+                    OR tt.cc=1),
+
+                te as (SELECT 
+                                        ttt.process, 
+                                        ttt.step, 
+                                        ttt.ppid, 
+                                        ttt.ee,
+                                        ttt.eqpid, 
+                                        ttt.chamberid, 
+                            ttt.prevent,
+                        ttt.eventtime,
+                                        e.batch_kind,
+                                        e.origin_line_id as eqp_line
+                                    FROM ttt
+                                    LEFT JOIN (SELECT DISTINCT
+                                                eqp_id,
+                                                batch_kind,
+                                                origin_line_id
+                                                FROM fab.m_mi_equipment where line_id = 'KFR7') e
+                                        ON ttt.ee = e.eqp_id
+                                    ORDER BY process, step, ppid, ee),
+
+                tee as (SELECT                     
+                                    a.process,
+                                    a.step,
+                                    a.ppid,
+                                    IFNULL(case when ifnull(a.batch_kind, '-') in ('BATCH_FURNACE', 'BATCH_WET') then a.eqpid else b.ee end, a.eqpid) as eqpcham,
+                                    a.eqpid,
+                                    IFNULL(case when ifnull(a.batch_kind, '-') in ('BATCH_FURNACE', 'BATCH_WET') then NULL else b.chamberid end, NULL) as chamberid,
+                                    a.batch_kind,
+                                    (case 
+                        when a.prevent='PREVENT' or b.prevent='PREVENT' then 'PREVENT'
+                                    else 'DOING' end) as prevent,   
+                                    a.prevent as type_body,
+                                    b.prevent as type_cham,          
+                        IFNULL(case when ifnull(a.batch_kind, '-') in ('BATCH_FURNACE', 'BATCH_WET') then a.eventtime else b.eventtime end, a.eventtime) as eventtime,
+                                    IFNULL(a.eqp_line, b.eqp_line) as eqpline
+                                FROM (SELECT * FROM te WHERE chamberid in ('MAIN', '-') or chamberid is null) a
+                                LEFT JOIN (SELECT * FROM te WHERE chamberid not in ('MAIN', '-') and chamberid is not null) b
+                                    ON a.process = b.process
+                                        AND a.step = b.step
+                                        AND a.ppid = b.ppid
+                                        AND a.eqpid = b.eqpid),
+
+s as (select
+s.processid,
+s.category,
+s.step_level as skiprule,
+s.eqptype,
+s.layerid,
+(case when s.eqptype<>'MMETAL' and substr(s.eqptype,1,1)='M' then '계측' else '메인' end) as stepseq_type,
+s.stepseq,
+s.descript,
+s.recipeid,
+s.delaytime,
+NULL as n2_delay_time_mins,
+s.eqpgroup as eqpgroup_raw,
+e.eqp_id
+from mos_kh_smi.smicdc_nrdk_ecn_step s
+left join (select eqp_group_name, eqp_id from mos_kh_smi.smicdc_nrdk_mc_eqp_group_list where eqp_group_name<>'JSORTE' or eqp_group_name='JSORTE' and (substr(eqp_id,1,1)<>'I' and eqp_id<>'JSORTE') order by eqp_group_name, eqp_id) e
+on s.eqpgroup = e.eqp_group_name
+where s.processid in ('K7FE')
+),
+
+t0 as (select
+s.processid,
+s.category,
+s.skiprule,
+s.eqptype,
+s.layerid,
+s.stepseq_type,
+s.stepseq,
+s.descript,
+s.recipeid,
+s.delaytime,
+s.eqpgroup_raw,
+nvl(tee.eqpcham, s.eqp_id) as eqpcham,
+nvl(tee.eqpid, s.eqp_id) as eqpid,
+tee.chamberid,
+tee.batch_kind,
+tee.prevent,
+tee.type_body,
+tee.type_cham,
+tee.eventtime,
+tee.eqpline
+from s
+left join tee
+on s.processid = tee.process
+	and s.stepseq = tee.step
+	and s.recipeid = tee.ppid),
+
+t1 as (select 
+t0.processid,
+t0.category,
+t0.skiprule,
+t0.eqptype,
+t0.layerid,
+t0.stepseq_type,
+t0.stepseq,
+t0.descript,
+t0.recipeid,
+t0.delaytime,
+t0.eqpgroup_raw,
+t0.eqpcham,
+t0.eqpid,
+t0.chamberid,
+nvl(t0.batch_kind, e.batch_kind) as batch_kind,
+t0.prevent,
+t0.type_body,
+t0.type_cham,
+t0.eventtime,
+nvl(t0.eqpline, e.origin_line_id) as eqpline
+from t0
+left join (select eqp_id, batch_kind, origin_line_id from fab.m_mi_equipment where line_id = 'KFR7') e
+on t0.eqpcham = e.eqp_id),
+
+t2 as (select
+t1.processid,
+t1.category,
+t1.skiprule,
+(case 
+            when substr(t1.eqpcham,1,1)='M' then 'METRO'
+            when substr(t1.eqpcham,1,1)='P' then 'PHOTO'
+            when substr(t1.eqpcham,1,1)='E' then 'ETCH'
+            when substr(t1.eqpcham,1,1)='S' then 'METAL'
+            when substr(t1.eqpcham,1,1)='T' then 'CVD'
+            when substr(t1.eqpcham,1,1)='W' then 'CLN'
+            when substr(t1.eqpcham,1,1)='D' then 'DIFF'
+            when substr(t1.eqpcham,1,1)='I' then 'IMP'
+            when substr(t1.eqpcham,1,1)='F' then 'IMP'
+                end) as areaname,	
+t1.eqptype,
+t1.layerid,
+'KFR7' as lineid,
+t1.stepseq_type,
+t1.stepseq,
+t1.descript,
+t1.recipeid,
+t1.delaytime,
+t1.eqpcham,
+t1.eqpid,
+t1.chamberid,
+t1.batch_kind,
+nvl(t1.prevent, '미등록') as prevent,
+t1.type_body,
+t1.type_cham,
+t1.eventtime,
+t1.eqpline
+from t1),
+
+        ce as (SELECT DISTINCT
+            name as eqp,
+            ppid,
+            childeqp
+                FROM MOS_KH_SMI.SMICDC_NRDK_EQPCAPABILITY
+            where revstate = 'Active'
+            
+            and status = 'Available'),
+
+        t10 as (select
+                processid,                           	
+                category,	
+                skiprule,
+                areaname,	
+                eqptype,	
+                layerid,	
+                lineid,
+                stepseq_type,
+                stepseq,	
+                descript,	
+                recipeid,	
+                batch_kind,
+                eqpcham,	
+                eqpid,	
+                chamberid,	
+                prevent,	
+                type_body,
+                type_cham,	
+                eventtime,	
+            childeqp,
+                eqpline
+        from t2
+        left join (select * from ce where ppid<>'-') ce
+        on t2.eqpid = ce.eqp
+            and t2.recipeid = ce.ppid),
+
+       t11 as (select 
+                processid,                           	
+                category,	
+                skiprule,
+                areaname,	
+                eqptype,	
+                layerid,	
+                lineid,
+                stepseq_type,
+                stepseq,	
+                descript,	
+                recipeid,	
+                batch_kind,
+                eqpcham,	
+                eqpid,	
+                chamberid,	
+                prevent,	
+                type_body,
+                type_cham,	
+                eventtime,	
+            nvl(t10.childeqp, ce.childeqp) as childeqp,
+                eqpline
+        from t10
+        left join (select * from ce where ppid = '-') ce
+        on t10.eqpid = ce.eqp),
+
+        er as (SELECT      
+            eqp_id,
+            batch_kind,
+            origin_line_id,      
+            eqp_parent_id,
+            (case when count(case when tool_kind='CHAMBER' then eqp_parent_id end) over (partition by eqp_parent_id)>=1 then 'CHAM설비' end) as cc
+        FROM fab.m_mi_equipment where line_id = 'KFR4')
+
+        select
+                processid,                           	
+                category,	
+                skiprule,
+                areaname,	
+                eqptype,	
+                layerid,	
+                lineid,
+                stepseq_type,
+                stepseq,	
+                descript,	
+                recipeid,	
+                batch_kind,
+                eqpcham,	
+                eqpid,	
+                chamberid,	
+                nvl(t11.prevent, case when er.cc is not null then '미등록' end) as prevent,	
+                type_body,
+                type_cham,	
+                eventtime,	
+                (case when instr(childeqp,':')>0 then childeqp else null end) as childeqp,
+                eqpline
+        from t11
+        left join (select distinct eqp_parent_id, cc from er where cc is not null and substr(eqp_parent_id,1,1)<>'P') er
+        on t11.eqpid = er.eqp_parent_id
+            """
+
+    ############## get data
+    with timer("getData: steptip3"):
+        df_steptip3 = getData(
+                            param = steptip3,
+                            # user_name = 'minuk12.choi',
+                            convert_type = my_convert_type,
+                            verbose = my_verbose
+                            )
+
+    with timer("build_b_table_from_a"):
+        df_final3 = build_b_table_from_a(
+            df_final=df_steptip3,            
+            days_threshold=30
+        )
+
+
+    return df_final3
