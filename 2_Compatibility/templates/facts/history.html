@@ -1,0 +1,99 @@
+{% extends "facts/base.html" %}
+{% load static %}
+{% block content %}
+<div class="card history-page-card" style="display:flex; flex-direction:column; gap:16px;">
+    <div class="card-header-row"><h3>변경 이력 확인</h3></div>
+    <form method="get">
+        <div class="filter-grid" style="grid-template-columns: repeat(6, minmax(110px, 1fr)); gap:8px; align-items:end;">
+            <div><label>LINE</label><select name="lineid"><option value="">전체</option>{% for v in line_options %}<option value="{{ v }}" {% if selected_lineid == v %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+            <div><label>PRP</label><select name="processid" class="dashboard-searchable-select" data-placeholder="PRP 검색 또는 선택"><option value="">전체</option>{% for v in prp_options %}<option value="{{ v }}" {% if selected_processid == v %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+            <div><label>주</label><select name="week">{% for w in week_options %}<option value="{{ w }}" {% if selected_week == w %}selected{% endif %}>{{ w }}</option>{% endfor %}</select></div>
+            <div>
+                <input type="hidden" name="include_measure" value="0">
+                <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" name="include_measure" value="1" {% if include_measure %}checked{% endif %}> 계측 포함</label>
+                <input type="hidden" name="include_emergency" value="0">
+                <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" name="include_emergency" value="1" {% if include_emergency %}checked{% endif %}> 비상시 포함</label>
+                <input type="hidden" name="exclude_skiprule_100" value="0">
+                <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" name="exclude_skiprule_100" value="1" {% if exclude_skiprule_100 %}checked{% endif %}> skiprule 100 제외</label>
+            </div>
+            <div></div>
+            <div style="display:flex; align-items:end;"><button type="submit" name="_search" value="1" class="btn-primary btn-sm" data-show-loading="1">요약 조회</button></div>
+            {% if pre_query_state %}<div style="grid-column:1/-1;color:#486888;font-size:13px;">PRP와 주차를 선택한 뒤 변경이력을 조회하세요.</div>{% endif %}
+        </div>
+    </form>
+
+    <div class="history-day-columns">
+        {% if pre_query_state %}<div class="empty-cell">조회 전 상태입니다. PRP와 주차를 선택한 뒤 변경이력을 조회하세요.</div>{% else %}{% for card in cards %}
+        <div class="history-day-column">
+            <div class="history-day-title">{{ card.date|date:"n/j (D)" }}</div>
+            <div class="history-metric-row"><span>전체STEP수</span><strong>{{ card.summary.total_steps }}</strong></div>
+            <div class="history-metric-row"><span>호환율</span><strong>{{ card.summary.compat_rate }}%</strong></div>
+            <div class="history-metric-row"><span>단독 / BODY / CHAM</span><strong>{{ card.summary.single_cnt }} / {{ card.summary.body_cnt }} / {{ card.summary.cham_cnt }}</strong></div>
+            <div class="history-metric-row"><span>단독_TIP / BODY_TIP / CHAM_TIP</span><strong>{{ card.tip_single }} / {{ card.tip_body }} / {{ card.tip_cham }}</strong></div>
+            {% for pc in card.prevent_counts %}<div class="history-metric-row"><span>{{ pc.label }} PREVENT</span><strong>{{ pc.value }}</strong></div>{% endfor %}
+            <div class="history-metric-row"><span>호환계획 입력수</span><strong>{{ card.plan_count }}</strong></div>
+            <div class="history-metric-row"><span>TIP미등록PATH 입력수</span><strong>{{ card.tip_missing_count }}</strong></div>
+            <div class="history-metric-row"><span>변경건수</span><strong>{{ card.change_count }}</strong></div>
+            <div class="history-change-box">
+                <div class="history-change-title">WEB입력값 변경유형</div>
+                {% if card.change_by_action %}
+                    {% for item in card.change_by_action %}
+                    <div class="history-metric-row"><span>{{ item.action_type_label }}</span><strong>{{ item.cnt }}</strong></div>
+                    {% endfor %}
+                {% else %}
+                    <div class="empty-cell" style="padding:8px 0;">변경 없음</div>
+                {% endif %}
+            </div>
+        </div>
+        {% empty %}<div class="empty-cell">조회 결과가 없습니다.</div>{% endfor %}{% endif %}
+    </div>
+
+    <div style="font-size:12px; color:#5e7895; margin-top:4px;">하단 RAW DATA는 LINE/PRP는 상단 조건을 공유하고, 기준일/작업유형은 아래 필터로 별도 조회됩니다.</div>
+    <form method="get" style="margin-top:6px;">
+        <input type="hidden" name="lineid" value="{{ selected_lineid }}">
+        <input type="hidden" name="processid" value="{{ selected_processid }}">
+        <input type="hidden" name="week" value="{{ selected_week }}">
+        <input type="hidden" name="include_measure" value="{{ include_measure|yesno:'1,0' }}">
+        <input type="hidden" name="include_emergency" value="{{ include_emergency|yesno:'1,0' }}">
+        <input type="hidden" name="exclude_skiprule_100" value="{{ exclude_skiprule_100|yesno:'1,0' }}">
+        <div class="filter-grid" style="grid-template-columns: repeat(4, minmax(140px, 1fr)); gap:8px; align-items:end; margin-bottom:8px;">
+            <div><label>기준일</label><input type="date" name="raw_snap_date" value="{{ selected_raw_snap_date }}"></div>
+            <div><label>작업유형</label><select name="action_type"><option value="">전체</option>{% for value,label in action_choices %}<option value="{{ value }}" {% if selected_action_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+            <div></div>
+            <div style="display:flex; align-items:end;"><button type="submit" class="btn-primary btn-sm" data-show-loading="1">RAW DATA 조회</button></div>
+        </div>
+    </form>
+    <div class="table-wrap history-table-wrap" style="margin-top:4px; overflow:auto;">
+        <table class="facts-table compact-facts-table" style="min-width: 1660px;">
+            <thead><tr><th>ID</th><th>기준일</th><th>변경시각</th><th>작업유형</th><th>LINE</th><th>PRP</th><th>STEP</th><th>RECIPE</th><th>변경자</th><th>변경 전</th><th>변경 후</th></tr></thead>
+            <tbody>{% if pre_query_state %}<tr><td colspan="11" class="empty-cell">조회 전 상태입니다. PRP와 주차를 선택하세요.</td></tr>{% else %}{% for row in rows %}<tr><td>{{ row.id }}</td><td>{{ row.snap_date|date:"Y-m-d" }}</td><td>{{ row.created_at|date:"Y-m-d H:i:s" }}</td><td>{{ row.action_type_label }}</td><td>{{ row.lineid }}</td><td>{{ row.processid }}</td><td>{{ row.stepseq }}</td><td>{{ row.recipeid }}</td><td>{% if row.changed_by %}{{ row.changed_by.username }}{% endif %}</td><td class="left-cell"><div class="cell-readonly long-cell" style="white-space:pre-wrap;">{{ row.before_json }}</div></td><td class="left-cell"><div class="cell-readonly long-cell" style="white-space:pre-wrap;">{{ row.after_json }}</div></td></tr>{% empty %}<tr><td colspan="11" class="empty-cell">조회 결과가 없습니다.</td></tr>{% endfor %}{% endif %}</tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script src="{% static 'facts/js/dashboard/filters.js' %}"></script>
+
+<script>
+if (window.FACTSDashboardFilters && window.FACTSDashboardFilters.initDashboardDropdowns) { window.FACTSDashboardFilters.initDashboardDropdowns(document); }
+(function(){
+ async function refresh(){
+   const snap=document.querySelector('input[name="snap_date"]')?.value||'';
+   const lineSel=document.querySelector('select[name="lineid"]');
+   const prpSel=document.querySelector('select[name="processid"]');
+   const line=lineSel?.value||''; const prp=prpSel?.value||'';
+   const q=new URLSearchParams({snap_date:snap,lineid:line,processid:prp});
+   const res=await fetch(`/facts/history/options-api/?${q.toString()}`);
+   const data=await res.json(); if(!data.ok) return;
+   lineSel.innerHTML='<option value="">전체</option>'+(data.line_options||[]).map(v=>`<option value="${v}">${v}</option>`).join('');
+   prpSel.innerHTML='<option value="">전체</option>'+(data.prp_options||[]).map(v=>`<option value="${v}">${v}</option>`).join('');
+   if((data.line_options||[]).includes(line)) lineSel.value=line;
+   if((data.prp_options||[]).includes(prp)) prpSel.value=prp;
+ }
+ document.querySelector('select[name="lineid"]')?.addEventListener('change', refresh);
+ document.querySelector('select[name="processid"]')?.addEventListener('change', refresh);
+ document.querySelector('input[name="snap_date"]')?.addEventListener('change', refresh);
+})();
+</script>
+{% endblock %}
