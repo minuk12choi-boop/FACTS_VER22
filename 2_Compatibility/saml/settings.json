@@ -1,0 +1,30 @@
+{
+  "strict": true,
+  "debug": true,
+  "sp": {
+    "entityId": "https://12.81.64.130:8000/facts/dashboard/",
+    "assertionConsumerService": {
+      "url": "https://12.81.64.130:8000/facts/saml/acs/",
+      "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+    },
+    "singleLogoutService": {
+      "url": "https://12.81.64.130:8000/facts/saml/logout/",
+      "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+    },
+    "NameIDFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+    "x509cert": "",
+    "privateKey": ""
+  },
+  "idp": {
+    "entityId": "http://stsds.secsso.net/adfs/services/trust",
+    "singleSignOnService": {
+      "url": "https://stsds.secsso.net/adfs/ls/",
+      "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+    },
+    "singleLogoutService": {
+      "url": "https://stsds.secsso.net/adfs/ls/?wa=wsignoutcleanup1.0",
+      "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+    },
+    "x509cert": "MIIC3DCCAcSgAwIBAgIQE/FK1BlimrxO4FEuKUgq8DANBgkqhkiG9w0BAQsFADAqMSgwJgYDVQQDEx9BREZTIFNpZ25pbmcgLSBzdHNkcy5zZWNzc28ubmV0MB4XDTIxMDkwOTAyMjYxNFoXDTQxMDkwNDAyMjYxNFowKjEoMCYGA1UEAxMfQURGUyBTaWduaW5nIC0gc3RzZHMuc2Vjc3NvLm5ldDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAKUbWK0rjJRU/EfnRvJjXDhKhQiFvI5M2zM1DcDA5BG3L73LAm4W1jiCYkeh2gauXGhBu+BsTOD/8As8ldKb6RwMplcvrtB2T7HAbkUKpSLo8mVjGCbxC8c/V+zpEUZD5wbI9W3nG6vrrTPpVkcu1DHz2M9w67N43bn57yqbBh0Yz7oBF60INB+Ltra5TYRdRhdw0PCVQGgs1VQ6kI+gS9UJ4Zf3YSxZkGx+tz2L5tCwkH+XZVtn1HUubfQ3/iAKzRGbp2lHaNKPZPWvXWaKgkVg2jAhL3oBPCICUnSc8rB2SnYPqiwgl1M0XPFd8nq8iVQW8Gcu8x8lTzOwroFTGAkCAwEAATANBgkqhkiG9w0BAQsFAAOCAQEAPYQScF/xj4Zn3bO2LKFtis9fGvA6km6FSfkYb+GEFBKN+kZ2y0dvvGru2u/JWAGoNNwjq4yPYAoo21OyoZONcFiyodrRpMP0m0wcMRnJJFkUthud6lvfV6I6N3YYOZ8ZFh2Ibt4CI86yiIG+B82kt+SoKrY0413rxxGqMXTuYIy1Zn1Pt+Jo8MyixR5k+yL71rqynQNehBXMs9e+X+rVOhy47eFzMrOzIWG5cz6GMIxh84YxDPqjvG2TZGk8LRVt6eGaL9JgtJNjCbAp+bm3TQNutRgrAyq6XQpQdTnB4k0EdBtWTFtZIrVi8vIZzFManH7eo4nsjiUOqeMaYinoBg=="
+  }
+}
