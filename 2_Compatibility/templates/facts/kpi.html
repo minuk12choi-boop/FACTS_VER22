@@ -1,0 +1,324 @@
+{% extends "facts/base.html" %}
+
+{% block content %}
+<form method="post" class="card" id="kpiForm">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="bulk_save">
+
+    <div class="card-header-row">
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+            <h3 style="margin:0;">KPI 목표 입력/수정</h3>
+            <span style="font-size:12px; color:#d32f2f; font-weight:700;">
+                수정은 해당 행에 체크를 한 후 값을 수정하시고 최종저장을 하셔야 최종저장이 반영됩니다.
+            </span>
+        </div>
+        <div class="toolbar-inline">
+            <button type="button" class="btn-secondary btn-sm" id="kpiAddRowBtn">행추가</button>
+            <button type="button" class="btn-secondary btn-sm" id="kpiDeleteCheckedBtn">선택삭제</button>
+            <button type="submit" class="btn-primary btn-sm" data-show-loading="1">최종 저장</button>
+        </div>
+    </div>
+
+    <div class="table-wrap compact-table-wrap kpi-box-table-wrap">
+        <table class="facts-table compact-facts-table kpi-compact-table" id="kpiTable">
+            <thead>
+                <tr>
+                    <th class="w-check"><input type="checkbox" id="kpiCheckAll"></th>
+                    <th class="w-type">구분</th>
+                    <th class="w-year">연도</th>
+                    <th class="w-month">월</th>
+                    <th class="w-week">주차</th>
+                    <th class="w-line">LINE</th>
+                    <th class="w-prp">PRP</th>
+                    <th class="w-area">AREA</th>
+                    <th class="w-rate">목표호환율(%)</th>
+                </tr>
+            </thead>
+            <tbody id="kpiTableBody">
+                {% for row in rows %}
+                <tr>
+                    <td>
+                        <input type="checkbox" class="kpi-row-check">
+                        <input type="hidden" name="row_id_{{ forloop.counter0 }}" value="{{ row.id }}">
+                        <input type="hidden" name="row_is_new_{{ forloop.counter0 }}" value="0">
+                        <input type="hidden" name="row_checked_{{ forloop.counter0 }}" class="row-checked-input" value="0">
+                        <input type="hidden" name="row_delete_flag_{{ forloop.counter0 }}" class="row-delete-input" value="0">
+                    </td>
+                    <td>
+                        <select name="row_target_type_{{ forloop.counter0 }}" class="compact-select row-target-type">
+                            <option value="monthly" {% if row.target_type == 'monthly' %}selected{% endif %}>monthly</option>
+                            <option value="weekly" {% if row.target_type == 'weekly' %}selected{% endif %}>weekly</option>
+                        </select>
+                    </td>
+                    <td>
+                        <input type="number"
+                               name="row_target_year_{{ forloop.counter0 }}"
+                               value="{{ row.target_year }}"
+                               class="compact-input"
+                               min="2000">
+                    </td>
+                    <td>
+                        <input type="number"
+                               name="row_target_month_{{ forloop.counter0 }}"
+                               value="{{ row.target_month|default_if_none:'' }}"
+                               class="compact-input row-target-month"
+                               min="1"
+                               max="12">
+                    </td>
+                    <td>
+                        <input type="text"
+                               name="row_target_week_{{ forloop.counter0 }}"
+                               value="{{ row.target_week_display }}"
+                               class="compact-input week-input row-target-week"
+                               placeholder="숫자를 입력해주세요"
+                               inputmode="numeric">
+                    </td>
+                    <td>
+                        <select name="row_lineid_{{ forloop.counter0 }}" class="compact-select">
+                            <option value="">선택</option>
+                            {% for line in line_rows %}
+                                <option value="{{ line }}" {% if row.lineid == line %}selected{% endif %}>{{ line }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    <td>
+                        <select name="row_processid_{{ forloop.counter0 }}" class="compact-select">
+                            <option value="">선택</option>
+                            {% for p in filters.processes %}
+                                <option value="{{ p }}" {% if row.processid == p %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    <td>
+                        <select name="row_areaname_{{ forloop.counter0 }}" class="compact-select">
+                            <option value="">전체</option>
+                            {% for a in filters.areas %}
+                                <option value="{{ a }}" {% if row.areaname == a %}selected{% endif %}>{{ a }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    <td>
+                        <input type="number"
+                               step="0.1"
+                               name="row_target_rate_{{ forloop.counter0 }}"
+                               value="{{ row.target_rate }}"
+                               class="compact-input"
+                               min="0">
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <input type="hidden" name="total_rows" id="kpiTotalRows" value="{{ rows|length }}">
+</form>
+{% endblock %}
+
+{% block script %}
+<script>
+(function () {
+    const form = document.getElementById("kpiForm");
+    const tbody = document.getElementById("kpiTableBody");
+    const totalRows = document.getElementById("kpiTotalRows");
+    const addBtn = document.getElementById("kpiAddRowBtn");
+    const deleteBtn = document.getElementById("kpiDeleteCheckedBtn");
+    const checkAll = document.getElementById("kpiCheckAll");
+
+    const lineOptions = `{% for line in line_rows %}<option value="{{ line }}">{{ line }}</option>{% endfor %}`;
+    const processOptions = `{% for p in filters.processes %}<option value="{{ p }}">{{ p }}</option>{% endfor %}`;
+    const areaOptions = `{% for a in filters.areas %}<option value="{{ a }}">{{ a }}</option>{% endfor %}`;
+
+    function normalizeWeekInputValue(raw) {
+        let s = String(raw || "").trim().toUpperCase();
+        if (!s) return "";
+        if (s.startsWith("W")) s = s.slice(1);
+        s = s.replace(/[^0-9]/g, "");
+        if (!s) return "";
+        let n = parseInt(s, 10);
+        if (Number.isNaN(n) || n < 1) return "";
+        if (n > 53) n = 53;
+        return `W${String(n).padStart(2, "0")}`;
+    }
+
+    function bindWeekInputs(scope) {
+        (scope || document).querySelectorAll(".week-input").forEach((input) => {
+            if (input.dataset.bound === "1") return;
+            input.dataset.bound = "1";
+
+            input.addEventListener("input", () => {
+                let s = input.value.toUpperCase().replace(/[^0-9W]/g, "");
+                if (s.startsWith("W")) {
+                    s = "W" + s.slice(1).replace(/[^0-9]/g, "");
+                } else {
+                    s = s.replace(/[^0-9]/g, "");
+                    if (s) s = "W" + s;
+                }
+                input.value = s;
+            });
+
+            input.addEventListener("blur", () => {
+                input.value = normalizeWeekInputValue(input.value);
+            });
+        });
+    }
+
+    function bindRowChecks() {
+        tbody.querySelectorAll("tr").forEach((tr) => {
+            const checkbox = tr.querySelector(".kpi-row-check");
+            const checkedInput = tr.querySelector(".row-checked-input");
+            if (!checkbox || !checkedInput) return;
+
+            checkbox.addEventListener("change", () => {
+                checkedInput.value = checkbox.checked ? "1" : "0";
+            });
+        });
+    }
+
+    function validateRows() {
+        const rows = Array.from(tbody.querySelectorAll("tr")).filter(tr => tr.style.display !== "none");
+
+        for (const tr of rows) {
+            const isChecked = tr.querySelector(".kpi-row-check")?.checked;
+            const isNew = tr.querySelector("input[name^='row_is_new_']")?.value === "1";
+            const deleteFlag = tr.querySelector(".row-delete-input")?.value === "1";
+
+            if (deleteFlag) continue;
+            if (!(isChecked || isNew)) continue;
+
+            const targetType = tr.querySelector(".row-target-type")?.value || "";
+            const year = tr.querySelector("input[name^='row_target_year_']")?.value.trim() || "";
+            const month = tr.querySelector(".row-target-month")?.value.trim() || "";
+            const week = tr.querySelector(".row-target-week")?.value.trim() || "";
+            const lineid = tr.querySelector("select[name^='row_lineid_']")?.value || "";
+            const processid = tr.querySelector("select[name^='row_processid_']")?.value || "";
+            const rate = tr.querySelector("input[name^='row_target_rate_']")?.value.trim() || "";
+
+            if (targetType === "monthly") {
+                if (!year || !month || !lineid || !processid || !rate) {
+                    alert("monthly는 연도, 월, LINE, PRP, 목표호환율(%)가 필수기재입니다.");
+                    return false;
+                }
+            } else if (targetType === "weekly") {
+                if (!year || !month || !week || !lineid || !processid || !rate) {
+                    alert("weekly는 연도, 월, 주차, LINE, PRP, 목표호환율(%)가 필수기재입니다.");
+                    return false;
+                }
+                const normalizedWeek = normalizeWeekInputValue(week);
+                if (!normalizedWeek) {
+                    alert("주차는 1~53 범위의 숫자를 입력해야 합니다.");
+                    return false;
+                }
+                tr.querySelector(".row-target-week").value = normalizedWeek;
+            }
+        }
+
+        return true;
+    }
+
+    addBtn?.addEventListener("click", () => {
+        const idx = parseInt(totalRows.value || "0", 10);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td>
+                <input type="checkbox" class="kpi-row-check" checked>
+                <input type="hidden" name="row_id_${idx}" value="">
+                <input type="hidden" name="row_is_new_${idx}" value="1">
+                <input type="hidden" name="row_checked_${idx}" class="row-checked-input" value="1">
+                <input type="hidden" name="row_delete_flag_${idx}" class="row-delete-input" value="0">
+            </td>
+            <td>
+                <select name="row_target_type_${idx}" class="compact-select row-target-type">
+                    <option value="monthly">monthly</option>
+                    <option value="weekly">weekly</option>
+                </select>
+            </td>
+            <td>
+                <input type="number" name="row_target_year_${idx}" class="compact-input" min="2000">
+            </td>
+            <td>
+                <input type="number" name="row_target_month_${idx}" class="compact-input row-target-month" min="1" max="12">
+            </td>
+            <td>
+                <input type="text"
+                       name="row_target_week_${idx}"
+                       class="compact-input week-input row-target-week"
+                       placeholder="숫자를 입력해주세요"
+                       inputmode="numeric">
+            </td>
+            <td>
+                <select name="row_lineid_${idx}" class="compact-select">
+                    <option value="">선택</option>
+                    ${lineOptions}
+                </select>
+            </td>
+            <td>
+                <select name="row_processid_${idx}" class="compact-select">
+                    <option value="">선택</option>
+                    ${processOptions}
+                </select>
+            </td>
+            <td>
+                <select name="row_areaname_${idx}" class="compact-select">
+                    <option value="">전체</option>
+                    ${areaOptions}
+                </select>
+            </td>
+            <td>
+                <input type="number" step="0.1" name="row_target_rate_${idx}" class="compact-input" min="0">
+            </td>
+        `;
+        tbody.appendChild(tr);
+        totalRows.value = String(idx + 1);
+        bindRowChecks();
+        bindWeekInputs(tr);
+    });
+
+    deleteBtn?.addEventListener("click", () => {
+        tbody.querySelectorAll("tr").forEach((tr) => {
+            const checkbox = tr.querySelector(".kpi-row-check");
+            const deleteInput = tr.querySelector(".row-delete-input");
+            const checkedInput = tr.querySelector(".row-checked-input");
+            const isNew = tr.querySelector("input[name^='row_is_new_']");
+
+            if (!checkbox) return;
+
+            if (checkbox.checked) {
+                if (isNew && isNew.value === "1") {
+                    tr.remove();
+                } else {
+                    deleteInput.value = "1";
+                    checkedInput.value = "1";
+                    tr.style.display = "none";
+                }
+            }
+        });
+    });
+
+    checkAll?.addEventListener("change", () => {
+        tbody.querySelectorAll(".kpi-row-check").forEach((chk) => {
+            const tr = chk.closest("tr");
+            if (tr && tr.style.display === "none") return;
+            chk.checked = checkAll.checked;
+            chk.dispatchEvent(new Event("change"));
+        });
+    });
+
+    form?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") {
+            e.preventDefault();
+        }
+    });
+
+    form?.addEventListener("submit", (e) => {
+        if (!validateRows()) {
+            e.preventDefault();
+            return;
+        }
+    });
+
+    bindRowChecks();
+    bindWeekInputs(document);
+})();
+</script>
+{% endblock %}
