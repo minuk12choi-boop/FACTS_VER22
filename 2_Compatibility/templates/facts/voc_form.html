@@ -1,0 +1,18 @@
+{% extends "facts/base.html" %}
+{% block content %}
+<div class="card" style="max-width:980px;">
+  <div class="card-header-row"><h3>{% if post %}VOC 수정{% else %}VOC 작성{% endif %}</h3></div>
+  <form method="post" data-show-loading="1" style="display:flex; flex-direction:column; gap:12px;">{% csrf_token %}
+    {% if post %}<input type="hidden" name="edit_id" value="{{ post.id }}">{% endif %}
+    <div><label>제목</label><input type="text" name="title" required value="{{ post.title|default:'' }}"></div>
+    {% if is_voc_admin %}
+    <div><label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="is_notice" value="1" {% if post and post.is_notice %}checked{% endif %}> 공지사항으로 등록</label></div>
+    {% endif %}
+    <div><label>내용</label><textarea name="content" rows="12" required>{{ post.content|default:'' }}</textarea></div>
+    <div style="display:flex; gap:8px;">
+      <button type="submit" class="btn-primary btn-sm">저장</button>
+      <a href="{% if post %}{% url 'facts:voc_detail' post.id %}{% else %}{% url 'facts:voc' %}{% endif %}" class="btn-secondary btn-sm">취소</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
