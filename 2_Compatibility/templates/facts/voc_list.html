@@ -1,0 +1,62 @@
+{% extends "facts/base.html" %}
+{% block content %}
+<div class="card" style="display:flex; flex-direction:column; gap:14px;">
+  {% if table_missing_message %}
+  <div class="empty-cell" style="padding:12px; border:1px solid #d8e2f0; border-radius:8px;">{{ table_missing_message }}</div>
+  {% endif %}
+  <div class="card-header-row">
+    <h3>VOC 게시판</h3>
+    <div class="toolbar-inline">
+      <form method="get" style="display:flex; gap:8px; align-items:center;">
+        <select name="tab">
+          <option value="all" {% if filter_tab == 'all' %}selected{% endif %}>전체</option>
+          <option value="notice" {% if filter_tab == 'notice' %}selected{% endif %}>공지사항</option>
+          <option value="general" {% if filter_tab == 'general' %}selected{% endif %}>일반 문의</option>
+        </select>
+        <select name="status">
+          <option value="all" {% if filter_status == 'all' %}selected{% endif %}>전체 상태</option>
+          <option value="pending" {% if filter_status == 'pending' %}selected{% endif %}>확인대기</option>
+          {% for st in answer_status_options %}
+          <option value="{{ st.id }}" {% if filter_status == st.id|stringformat:'s' %}selected{% endif %}>{{ st.status_name }}{% if not st.is_active %} (비활성){% endif %}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn-secondary btn-sm">조회</button>
+      </form>
+      {% if is_voc_admin %}<a href="{% url 'facts:voc_new' %}" class="btn-primary btn-sm">새 글 작성</a>{% else %}<a href="{% url 'facts:voc_new' %}" class="btn-primary btn-sm">새 글 작성</a>{% endif %}
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="facts-table compact-facts-table voc-list-table">
+      <thead><tr><th class="voc-col-kind">구분</th><th class="voc-col-status">상태</th><th class="voc-col-status">공식답변 상태</th><th class="voc-col-title">제목</th><th class="voc-col-user">작성자</th><th class="voc-col-dept">부서</th><th class="voc-col-date">작성일</th></tr></thead>
+      <tbody>
+      {% for row in posts %}
+        <tr>
+          <td>{% if row.is_notice %}<span class="voc-badge-notice">공지</span>{% else %}일반{% endif %}</td>
+          <td>{% if row.official_answer_status %}<span class="voc-badge-answer done">상태지정</span>{% else %}<span class="voc-badge-answer pending">확인대기</span>{% endif %}</td>
+          <td>
+            {% if row.official_answer_status %}
+              <span class="voc-badge-answer voc-badge-status
+                {% if row.official_answer_status.status_name == '답변 확인' %} status-answer-check
+                {% elif row.official_answer_status.status_name == '적용 검토' %} status-review
+                {% elif row.official_answer_status.status_name == '적용 예정' %} status-planned
+                {% elif row.official_answer_status.status_name == '적용 완료' %} status-done
+                {% else %} status-custom{% endif %}">
+                {{ row.official_answer_status.status_name }}
+              </span>
+            {% else %}
+              <span class="voc-badge-answer pending">확인대기</span>
+            {% endif %}
+          </td>
+          <td class="left-cell voc-title-cell"><a href="{% url 'facts:voc_detail' row.id %}" class="voc-title-link">{% if row.is_notice %}[공지] {% endif %}{{ row.title }}</a></td>
+          <td>{{ row.username }}</td>
+          <td>{{ row.department }}</td>
+          <td>{{ row.created_at|date:"Y-m-d H:i" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="empty-cell">등록된 글이 없습니다.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
