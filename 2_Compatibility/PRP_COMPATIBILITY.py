@@ -919,7 +919,7 @@ with
                         end) as prevent,
                                         (case when t.chamberid is not null and t.chamberid not in ('MAIN', '-') then concat(t.eqpid,'-',chamberid) else t.eqpid end) as ee,
                         t.eventtime
-                FROM mos_kh_smi.smicdc_p3nrd_trackinprevent t
+                FROM mos_kh_smi.smicdc_nrdk_trackinprevent t
                 WHERE process in ('K7FE')
                 ),
 
@@ -1023,7 +1023,7 @@ tee.eqpline
 from s
 left join tee
 on s.processid = tee.process
-	and s.stepseq = tee.process
+	and s.stepseq = tee.step
 	and s.recipeid = tee.ppid),
 
 t1 as (select 
@@ -1049,9 +1049,9 @@ t0.eventtime,
 nvl(t0.eqpline, e.origin_line_id) as eqpline
 from t0
 left join (select eqp_id, batch_kind, origin_line_id from fab.m_mi_equipment where line_id = 'KFR7') e
-on t0.eqpcham = e.eqp_id)
+on t0.eqpcham = e.eqp_id),
 
-select
+t2 as (select
 t1.processid,
 t1.category,
 t1.skiprule,
@@ -1082,9 +1082,104 @@ nvl(t1.prevent, '미등록') as prevent,
 t1.type_body,
 t1.type_cham,
 t1.eventtime,
-NULL as childeqp,
 t1.eqpline
-from t1
+from t1),
+
+        ce as (SELECT DISTINCT
+            name as eqp,
+            ppid,
+            childeqp
+                FROM MOS_KH_SMI.SMICDC_NRDK_EQPCAPABILITY
+            where revstate = 'Active'
+            
+            and status = 'Available'),
+
+        t10 as (select
+                processid,                           	
+                category,	
+                skiprule,
+                areaname,	
+                eqptype,	
+                layerid,	
+                lineid,
+                stepseq_type,
+                stepseq,	
+                descript,	
+                recipeid,	
+                batch_kind,
+                eqpcham,	
+                eqpid,	
+                chamberid,	
+                prevent,	
+                type_body,
+                type_cham,	
+                eventtime,	
+            childeqp,
+                eqpline
+        from t2
+        left join (select * from ce where ppid<>'-') ce
+        on t2.eqpid = ce.eqp
+            and t2.recipeid = ce.ppid),
+
+       t11 as (select 
+                processid,                           	
+                category,	
+                skiprule,
+                areaname,	
+                eqptype,	
+                layerid,	
+                lineid,
+                stepseq_type,
+                stepseq,	
+                descript,	
+                recipeid,	
+                batch_kind,
+                eqpcham,	
+                eqpid,	
+                chamberid,	
+                prevent,	
+                type_body,
+                type_cham,	
+                eventtime,	
+            nvl(t10.childeqp, ce.childeqp) as childeqp,
+                eqpline
+        from t10
+        left join (select * from ce where ppid = '-') ce
+        on t10.eqpid = ce.eqp),
+
+        er as (SELECT      
+            eqp_id,
+            batch_kind,
+            origin_line_id,      
+            eqp_parent_id,
+            (case when count(case when tool_kind='CHAMBER' then eqp_parent_id end) over (partition by eqp_parent_id)>=1 then 'CHAM설비' end) as cc
+        FROM fab.m_mi_equipment where line_id = 'KFR4')
+
+        select
+                processid,                           	
+                category,	
+                skiprule,
+                areaname,	
+                eqptype,	
+                layerid,	
+                lineid,
+                stepseq_type,
+                stepseq,	
+                descript,	
+                recipeid,	
+                batch_kind,
+                eqpcham,	
+                eqpid,	
+                chamberid,	
+                nvl(t11.prevent, case when er.cc is not null then '미등록' end) as prevent,	
+                type_body,
+                type_cham,	
+                eventtime,	
+                (case when instr(childeqp,':')>0 then childeqp else null end) as childeqp,
+                eqpline
+        from t11
+        left join (select distinct eqp_parent_id, cc from er where cc is not null and substr(eqp_parent_id,1,1)<>'P') er
+        on t11.eqpid = er.eqp_parent_id
             """
 
     ############## get data
@@ -1104,6 +1199,7 @@ from t1
 
 
     return df_final3
+
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="FACTS raw 적재 + 필터/요약 사전계산 배치")
