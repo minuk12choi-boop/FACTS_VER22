@@ -1,6 +1,6 @@
 (function () {
     "use strict";
-    const PRP_TABLE_JS_VERSION = "tip-missing-render-20260504";
+    const PRP_TABLE_JS_VERSION = "eqptype-delaytime-render-20260603";
     console.info(`[FACTS] prp_table.js version=${PRP_TABLE_JS_VERSION}`);
 
     function qs(id) {
@@ -623,7 +623,7 @@
     function renderEmptyPrpMessage(message) {
         const tbody = qs("prpDashboardTbody");
         if (!tbody) return;
-        tbody.innerHTML = `<tr><td colspan="40" class="empty-cell">${escapeHtml(message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="42" class="empty-cell">${escapeHtml(message)}</td></tr>`;
     }
 
     function renderTable(rows) {
@@ -646,6 +646,8 @@
                     data-layer="${escapeHtml(row.layerid)}"
                     data-descript="${escapeHtml(row.descript)}"
                     data-recipe="${escapeHtml(row.recipeid)}"
+                    data-eqptype="${escapeHtml(row.eqptype || "")}"
+                    data-delaytime="${escapeHtml(row.delaytime || "")}"
                     data-type="${escapeHtml(row.stepseq_type)}"
                     data-bodyflag="${escapeHtml(row.body_compat_flag)}"
                     data-chamflag="${escapeHtml(row.cham_compat_flag)}"
@@ -662,6 +664,8 @@
                     <td class="center-cell"><div class="cell-readonly" tabindex="0">${escapeHtml(row.layerid)}</div></td>
                     <td class="center-cell"><div class="cell-readonly" tabindex="0">${escapeHtml(row.stepseq)}</div></td>
                     <td class="center-cell"><div class="cell-readonly" tabindex="0">${escapeHtml(row.skiprule)}</div></td>
+                    <td class="center-cell"><div class="cell-readonly" tabindex="0">${escapeHtml(row.eqptype || "")}</div></td>
+                    <td class="center-cell"><div class="cell-readonly" tabindex="0">${escapeHtml(row.delaytime || "")}</div></td>
                     <td class="left-cell"><div class="cell-readonly" tabindex="0">${escapeHtml(row.descript)}</div></td>
                     <td class="left-cell"><div class="cell-readonly" tabindex="0">${escapeHtml(row.recipeid)}</div></td>
                     <td class="center-cell eqpgroup-cell">

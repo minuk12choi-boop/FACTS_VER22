@@ -915,6 +915,7 @@ def build_df_compatibility_summary(
         "skiprule",
         "areaname",
         "eqptype",
+        "delaytime",
         "layerid",
         "lineid",
         "stepseq_type",
@@ -939,6 +940,10 @@ def build_df_compatibility_summary(
         "childeqp",
         "eqpline",
     ]
+
+    for c in final_cols:
+        if c not in df.columns:
+            df[c] = np.nan
 
     return df[final_cols].copy()
 
@@ -1208,7 +1213,7 @@ def build_b_table_from_a(
     입력 a 컬럼
     ----------
     [
-        processid, category, skiprule, areaname, eqptype, layerid, lineid,
+        processid, category, skiprule, areaname, eqptype, delaytime, layerid, lineid,
         stepseq_type, stepseq, descript, recipeid, batch_kind,
         eqpcham, eqpid, chamberid, prevent, type_body, type_cham,
         eventtime, childeqp, eqpline
@@ -1217,7 +1222,7 @@ def build_b_table_from_a(
     출력 b 컬럼
     ----------
     [
-        processid, category, skiprule, areaname, eqptype, layerid, lineid,
+        processid, category, skiprule, areaname, eqptype, delaytime, layerid, lineid,
         stepseq_type, stepseq, descript, recipeid, batch_kind,
         eqpgroup, 상시/비상시,
         Body호환, Cham호환,
@@ -1244,6 +1249,8 @@ def build_b_table_from_a(
         now_ts = pd.Timestamp(now_ts)
 
     df = df_final.copy()
+    if "delaytime" not in df.columns:
+        df["delaytime"] = np.nan
 
     # ------------------------------------------------------------------
     # 공통 전처리
@@ -1255,7 +1262,7 @@ def build_b_table_from_a(
         return s if s else np.nan
 
     text_cols = [
-        "processid", "category", "skiprule", "areaname", "eqptype", "layerid", "lineid",
+        "processid", "category", "skiprule", "areaname", "eqptype", "delaytime", "layerid", "lineid",
         "stepseq_type", "stepseq", "descript", "recipeid", "batch_kind",
         "eqpcham", "eqpid", "chamberid", "prevent", "type_body", "type_cham",
         "childeqp", "eqpline",
@@ -1437,6 +1444,7 @@ def build_b_table_from_a(
             "skiprule": template_row["skiprule"],
             "areaname": template_row["areaname"],
             "eqptype": template_row["eqptype"],
+            "delaytime": template_row.get("delaytime", np.nan),
             "layerid": template_row["layerid"],
             "lineid": template_row["lineid"],
             "stepseq_type": template_row["stepseq_type"],
@@ -1574,6 +1582,7 @@ def build_b_table_from_a(
                     "skiprule": template["skiprule"],
                     "areaname": template["areaname"],
                     "eqptype": template["eqptype"],
+                    "delaytime": template.get("delaytime", np.nan),
                     "layerid": template["layerid"],
                     "lineid": template["lineid"],
                     "stepseq_type": template["stepseq_type"],
@@ -1677,6 +1686,7 @@ def build_b_table_from_a(
                     "skiprule": template["skiprule"],
                     "areaname": template["areaname"],
                     "eqptype": template["eqptype"],
+                    "delaytime": template.get("delaytime", np.nan),
                     "layerid": template["layerid"],
                     "lineid": template["lineid"],
                     "stepseq_type": template["stepseq_type"],
@@ -1740,7 +1750,7 @@ def build_b_table_from_a(
 
     if df_path.empty:
         final_cols = [
-            "processid", "category", "skiprule", "areaname", "eqptype", "layerid", "lineid",
+            "processid", "category", "skiprule", "areaname", "eqptype", "delaytime", "layerid", "lineid",
             "stepseq_type", "stepseq", "descript", "recipeid", "batch_kind",
             "eqpgroup", "상시/비상시",
             "Body호환", "Cham호환",
@@ -2009,6 +2019,7 @@ def build_b_table_from_a(
         "skiprule",
         "areaname",
         "eqptype",
+        "delaytime",
         "layerid",
         "lineid",
         "stepseq_type",

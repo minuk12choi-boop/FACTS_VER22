@@ -36,6 +36,7 @@ from .tip_missing import calculate_prevent_age_days, _build_tip_missing_summary_
 logger = logging.getLogger(__name__)
 TIP_MISSING_ASOF_VERSION = "tip-missing-asof-v4-date-debug-align"
 MANUAL_INPUT_ASOF_VERSION = "manual-input-asof-v3-date-debug-align"
+PRP_SOURCE_COLUMN_VERSION = "source-columns-eqptype-delaytime-v1"
 
 
 def _build_step_dataset_cache_key_parts(
@@ -69,6 +70,7 @@ def _build_step_dataset_cache_key_parts(
         "for_prp_table": int(bool(for_prp_table)),
         "as_of_date": resolved_as_of,
         "tip_threshold_days": _get_tip_threshold_days(),
+        "source_column_version": PRP_SOURCE_COLUMN_VERSION,
         "tip_missing_asof_version": TIP_MISSING_ASOF_VERSION,
         "manual_input_asof_version": MANUAL_INPUT_ASOF_VERSION,
     }
@@ -82,7 +84,8 @@ def get_build_step_dataset_debug_info(**kwargs):
         f"{parts['snap_date']}|{parts['as_of_date']}|{parts['processid']}|{parts['areaname']}|{parts['layerid']}|"
         f"{parts['lineid']}|{parts['compat_filter']}|{parts['include_measure']}|{parts['include_emergency']}|"
         f"{parts['exclude_skiprule_100']}|{parts['tip_mode']}|{parts['for_prp_table']}|"
-        f"{parts['tip_threshold_days']}|{parts['tip_missing_asof_version']}|{parts['manual_input_asof_version']}"
+        f"{parts['tip_threshold_days']}|{parts['source_column_version']}|"
+        f"{parts['tip_missing_asof_version']}|{parts['manual_input_asof_version']}"
     )
     return {"cache_key": cache_key, "cache_key_parts": parts}
 
@@ -326,6 +329,8 @@ def build_step_dataset(
         "recipeid_set": set(),
         "areaname": "",
         "layerid": "",
+        "eqptype_values": set(),
+        "delaytime_values": set(),
         "skiprule": "",
         "descript": "",
         "stepseq_type": "",
@@ -365,6 +370,10 @@ def build_step_dataset(
         step_item["stepseq"] = row.stepseq or ""
         step_item["areaname"] = row.areaname or ""
         step_item["layerid"] = normalize_layer_value(row.layerid)
+        if getattr(row, "eqptype", None):
+            step_item["eqptype_values"].add(str(row.eqptype).strip())
+        if getattr(row, "delaytime", None):
+            step_item["delaytime_values"].add(str(row.delaytime).strip())
         step_item["skiprule"] = row.skiprule or ""
         step_item["descript"] = row.descript or ""
         step_item["stepseq_type"] = row.stepseq_type or ""
@@ -463,6 +472,8 @@ def build_step_dataset(
             if x not in merged_chams_tip:
                 merged_chams_tip.append(x)
         recipe_str = ", ".join(sorted(item["recipeid_set"])) if item["recipeid_set"] else ""
+        eqptype_str = ", ".join(sorted(x for x in item["eqptype_values"] if x)) if item["eqptype_values"] else ""
+        delaytime_str = ", ".join(sorted(x for x in item["delaytime_values"] if x)) if item["delaytime_values"] else ""
         eqpgroup_str = ", ".join(merged_eqps) if merged_eqps else ""
         cham_display = _compact_cham_tokens(merged_chams)
         paths = item["paths"]
@@ -516,13 +527,15 @@ def build_step_dataset(
             tip_parts.append(f"{part}({int(item['tip_age_days'][part])}일↑)")
         row = {
             "snap_date": snap_date,
-        "final_always_emergency": "",
-        "final_major_minor": "",
+            "final_always_emergency": "",
+            "final_major_minor": "",
             "lineid": lineid_val,
             "processid": processid_val,
             "stepseq": stepseq_val,
             "areaname": item["areaname"],
             "layerid": item["layerid"],
+            "eqptype": eqptype_str,
+            "delaytime": delaytime_str,
             "skiprule": item["skiprule"],
             "descript": item["descript"],
             "recipeid": recipe_str,
@@ -1165,6 +1178,8 @@ def export_prp_csv(step_rows):
         "LAYER",
         "STEP",
         "SKIPRULE",
+        "EQPTYPE",
+        "DELAYTIME",
         "DESCRIPT",
         "RECIPE",
         "EQPGROUP",
@@ -1209,6 +1224,8 @@ def export_prp_csv(step_rows):
             row["layerid"],
             row["stepseq"],
             row["skiprule"],
+            row.get("eqptype") or "",
+            row.get("delaytime") or "",
             row["descript"],
             row["recipeid"],
             row["eqpgroup"],
