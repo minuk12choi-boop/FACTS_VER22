@@ -12,6 +12,7 @@ class FactsWipSource(models.Model):
     skiprule = models.CharField(max_length=50, blank=True, default="")
     areaname = models.CharField(max_length=100, blank=True, default="")
     eqptype = models.CharField(max_length=100, blank=True, default="")
+    delaytime = models.CharField(max_length=100, blank=True, default="")
     layerid = models.CharField(max_length=100, blank=True, default="")
     lineid = models.CharField(max_length=100, null=True, blank=True, db_column="lineid")
     stepseq_type = models.CharField(max_length=50, blank=True, default="")
