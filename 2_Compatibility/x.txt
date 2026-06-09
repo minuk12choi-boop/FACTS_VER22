@@ -1,9 +1,4 @@
-SELECT
-    f.lineid,
-    f.processid,
-    f.snap_date,
-    f.loaded_at,
-    COUNT(*) AS delete_rows
+DELETE f
 FROM facts_wip_source f
 JOIN (
     SELECT
@@ -12,20 +7,9 @@ JOIN (
         snap_date,
         MAX(loaded_at) AS max_loaded_at
     FROM facts_wip_source
-    WHERE snap_date = '2026-06-09'
     GROUP BY lineid, processid, snap_date
 ) latest
   ON f.lineid = latest.lineid
  AND f.processid = latest.processid
  AND f.snap_date = latest.snap_date
-WHERE f.snap_date = '2026-06-09'
-  AND f.loaded_at < latest.max_loaded_at
-GROUP BY
-    f.lineid,
-    f.processid,
-    f.snap_date,
-    f.loaded_at
-ORDER BY
-    f.lineid,
-    f.processid,
-    f.loaded_at;
+WHERE f.loaded_at < latest.max_loaded_at;
