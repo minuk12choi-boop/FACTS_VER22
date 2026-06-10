@@ -1,94 +1,7 @@
-PS D:\PERSONAL_SPACE\SW\python\5_multiwip> python D:\PERSONAL_SPACE\SW\python\2_Compatibility\PRP_COMPATIBILITY_copy.py
-Traceback (most recent call last):
-  File "D:\PERSONAL_SPACE\SW\python\2_Compatibility\PRP_COMPATIBILITY_copy.py" 'NoneType' object is not callable  
 
-
-import argparse
-import datetime as dt
-import importlib
-import os
-import sys
-import time
-from contextlib import contextmanager
-
-pd = None
-bdq = None
-getData = None
-append_df_to_mysql = None
-append_df_to_mysql_eqpmodel = None
-build_steptip_path = None
-build_df_compatibility_summary = None
-build_step_jump_chain = None
-build_b_table_from_a = None
-
-
-@contextmanager
-def timer(name: str):
-    t0 = time.perf_counter()
-    yield
-    dt_sec = time.perf_counter() - t0
-    print(f"[TIMER] {name}: {dt_sec:,.2f} sec")
-
-
-def setup_django_for_batch(settings_module="config.settings"):
-    import django
-
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    if base_dir not in sys.path:
-        sys.path.insert(0, base_dir)
-
-    os.environ["DJANGO_SETTINGS_MODULE"] = settings_module
-
-    if "config" in sys.modules:
-        del sys.modules["config"]
-
-    config_module = importlib.import_module("config")
-    print("django config module path =", getattr(config_module, "__file__", "namespace package"))
-    django.setup()
-
-    from django.conf import settings
-
-    db = settings.DATABASES.get("default", {})
-    print(f"[BATCH] DJANGO_SETTINGS_MODULE={settings_module}")
-    print(f"[BATCH] DB ENGINE={db.get('ENGINE', '')}")
-    print(f"[BATCH] DB NAME={db.get('NAME', '')}")
-    print(f"[BATCH] DB HOST={db.get('HOST', '')}")
-    if settings_module == "config.settings_codex":
-        print("[BATCH][WARNING] config.settings_codex 사용 중입니다. 운영/사내 배치는 config.settings 사용을 권장합니다.")
-
-
-def _ensure_raw_dependencies():
-    global pd, bdq, getData
-    global append_df_to_mysql, append_df_to_mysql_eqpmodel
-    global build_steptip_path, build_df_compatibility_summary, build_step_jump_chain, build_b_table_from_a
-    if (
-        pd is not None and bdq is not None and getData is not None
-        and append_df_to_mysql is not None and append_df_to_mysql_eqpmodel is not None
-        and build_steptip_path is not None and build_df_compatibility_summary is not None
-        and build_step_jump_chain is not None and build_b_table_from_a is not None
-    ):
-        return
-    import pandas as _pd
-    import bigdataquery as _bdq
-    from bigdataquery import getData as _get_data
-    from my_def import (
-        append_df_to_mysql as _append_df_to_mysql,
-        append_df_to_mysql_eqpmodel as _append_df_to_mysql_eqpmodel,
-        build_b_table_from_a as _build_b_table_from_a,
-        build_df_compatibility_summary as _build_df_compatibility_summary,
-        build_step_jump_chain as _build_step_jump_chain,
-        build_steptip_path as _build_steptip_path,
-    )
-
-    pd = _pd
-    bdq = _bdq
-    getData = _get_data
-    append_df_to_mysql = _append_df_to_mysql
-    append_df_to_mysql_eqpmodel = _append_df_to_mysql_eqpmodel
-    build_b_table_from_a = _build_b_table_from_a
-    build_df_compatibility_summary = _build_df_compatibility_summary
-    build_step_jump_chain = _build_step_jump_chain
-    build_steptip_path = _build_steptip_path
+import pandas as pd
+import bigdataquery as bdq
+from bigdataquery import getData
 
 
 def smicdc_merge():
@@ -361,32 +274,26 @@ on s.processid = tee.process
         on t11.eqpid = er.eqp_parent_id
             """
 
-    ############## get data
-    with timer("getData: steptip"):
-        df_step = getData(
-                            param = steptip,
-                            # user_name = 'minuk12.choi',
-                            convert_type = my_convert_type,
-                            verbose = my_verbose
-                            )
+
+    df_step = getData(
+                        param = steptip,
+                        # user_name = 'minuk12.choi',
+                        convert_type = my_convert_type,
+                        verbose = my_verbose
+                        )
 
     file_path = "check_result222.xlsx"
 
 
-    t_excel_start = time.perf_counter()
-
     # 데이터프레임 저장
-    df_steptip.to_excel(
+    df_step.to_excel(
         file_path, 
         index=False, 
         engine="openpyxl")
     
-    t_excel_end = time.perf_counter()
-    
     print(f"파일이 저장되었습니다: {file_path}")
-    print(f"파일이 저장시간: {t_excel_end-t_excel_start:.2f} sec")
 
-    return df_steptip
+    return df_step
 
 
 smicdc_merge()
