@@ -1,1 +1,392 @@
+PS D:\PERSONAL_SPACE\SW\python\5_multiwip> python D:\PERSONAL_SPACE\SW\python\2_Compatibility\PRP_COMPATIBILITY_copy.py
+Traceback (most recent call last):
+  File "D:\PERSONAL_SPACE\SW\python\2_Compatibility\PRP_COMPATIBILITY_copy.py" 'NoneType' object is not callable  
 
+
+import argparse
+import datetime as dt
+import importlib
+import os
+import sys
+import time
+from contextlib import contextmanager
+
+pd = None
+bdq = None
+getData = None
+append_df_to_mysql = None
+append_df_to_mysql_eqpmodel = None
+build_steptip_path = None
+build_df_compatibility_summary = None
+build_step_jump_chain = None
+build_b_table_from_a = None
+
+
+@contextmanager
+def timer(name: str):
+    t0 = time.perf_counter()
+    yield
+    dt_sec = time.perf_counter() - t0
+    print(f"[TIMER] {name}: {dt_sec:,.2f} sec")
+
+
+def setup_django_for_batch(settings_module="config.settings"):
+    import django
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    if base_dir not in sys.path:
+        sys.path.insert(0, base_dir)
+
+    os.environ["DJANGO_SETTINGS_MODULE"] = settings_module
+
+    if "config" in sys.modules:
+        del sys.modules["config"]
+
+    config_module = importlib.import_module("config")
+    print("django config module path =", getattr(config_module, "__file__", "namespace package"))
+    django.setup()
+
+    from django.conf import settings
+
+    db = settings.DATABASES.get("default", {})
+    print(f"[BATCH] DJANGO_SETTINGS_MODULE={settings_module}")
+    print(f"[BATCH] DB ENGINE={db.get('ENGINE', '')}")
+    print(f"[BATCH] DB NAME={db.get('NAME', '')}")
+    print(f"[BATCH] DB HOST={db.get('HOST', '')}")
+    if settings_module == "config.settings_codex":
+        print("[BATCH][WARNING] config.settings_codex 사용 중입니다. 운영/사내 배치는 config.settings 사용을 권장합니다.")
+
+
+def _ensure_raw_dependencies():
+    global pd, bdq, getData
+    global append_df_to_mysql, append_df_to_mysql_eqpmodel
+    global build_steptip_path, build_df_compatibility_summary, build_step_jump_chain, build_b_table_from_a
+    if (
+        pd is not None and bdq is not None and getData is not None
+        and append_df_to_mysql is not None and append_df_to_mysql_eqpmodel is not None
+        and build_steptip_path is not None and build_df_compatibility_summary is not None
+        and build_step_jump_chain is not None and build_b_table_from_a is not None
+    ):
+        return
+    import pandas as _pd
+    import bigdataquery as _bdq
+    from bigdataquery import getData as _get_data
+    from my_def import (
+        append_df_to_mysql as _append_df_to_mysql,
+        append_df_to_mysql_eqpmodel as _append_df_to_mysql_eqpmodel,
+        build_b_table_from_a as _build_b_table_from_a,
+        build_df_compatibility_summary as _build_df_compatibility_summary,
+        build_step_jump_chain as _build_step_jump_chain,
+        build_steptip_path as _build_steptip_path,
+    )
+
+    pd = _pd
+    bdq = _bdq
+    getData = _get_data
+    append_df_to_mysql = _append_df_to_mysql
+    append_df_to_mysql_eqpmodel = _append_df_to_mysql_eqpmodel
+    build_b_table_from_a = _build_b_table_from_a
+    build_df_compatibility_summary = _build_df_compatibility_summary
+    build_step_jump_chain = _build_step_jump_chain
+    build_steptip_path = _build_steptip_path
+
+
+def smicdc_merge():
+
+    my_convert_type = True
+    my_verbose = True
+
+    steptip = """
+                with
+t as (select 
+(case when nvl(t.product_id,'-')<>'-' then t.product_id else t.process_id end) as process,
+t.step_seq as step,
+t.ppid,
+t.eqp_id as eqpid,
+t.tkin_prevent_chamber_id as chamberid,
+(case 
+when datediff( now(), to_timestamp(last_tkout_time, 'yyyyMMdd HHmmss'))>=180 then 'PREVENT'
+when t.tkin_prevent_type='DOING' then 'DOING' 
+when t.tkin_prevent_type='PREVENT' AND IFNULL(t.tkin_restrc_lot_count,0)=0 then 'PREVENT' 
+when t.tkin_prevent_type='PREVENT' AND IFNULL(t.tkin_lot_count,0)>=IFNULL(t.tkin_restrc_lot_count,0) then 'PREVENT' 
+when t.tkin_prevent_type='PREVENT' AND IFNULL(t.tkin_lot_count,0)<IFNULL(t.tkin_restrc_lot_count,0) then 'DOING' 
+end) as prevent,
+(case when t.tkin_prevent_chamber_id is not null and t.tkin_prevent_chamber_id not in ('MAIN', '-') then concat(t.eqp_id,'-',t.tkin_prevent_chamber_id) else t.eqp_id end) as ee,
+(case
+when t.update_date is null then t.registration_date
+when t.registration_date is null then t.update_date
+else greatest(t.update_date, t.registration_date)
+end) as eventtime
+FROM MOS_KH_SMI.LMIMES_MI_TKIN_PREVENT t
+where line_id='KFR6'
+	and (product_id is not null or process_id in ('KVFI'))),
+
+tt as (SELECT
+                    t.*,
+                    (count(case when t.prevent = 'DOING' then t.prevent end) OVER (PARTITION BY t.process, t.step, t.ppid, t.ee)) as C,
+                    (count(t.ee) over (partition by t.process, t.step, t.ppid, t.ee)) as CC,
+                    (max(t.eventtime) over (partition by t.process, t.step, t.ppid, t.ee, t.prevent)) as M
+                        FROM t),
+
+                ttt as (SELECT 
+                * 
+                FROM tt
+                WHERE tt.cc>1 and tt.c>0 and tt.prevent='DOING' and tt.m=tt.eventtime
+                    OR tt.cc>1 and tt.c=0 and tt.m=tt.eventtime
+                    OR tt.cc=1),
+
+                te as (SELECT 
+                                        ttt.process, 
+                                        ttt.step, 
+                                        ttt.ppid, 
+                                        ttt.ee,
+                                        ttt.eqpid, 
+                                        ttt.chamberid, 
+                            ttt.prevent,
+                        ttt.eventtime,
+                                        e.batch_kind,
+                                        e.origin_line_id as eqp_line
+                                    FROM ttt
+                                    LEFT JOIN (SELECT DISTINCT
+                                                eqp_id,
+                                                batch_kind,
+                                                origin_line_id
+                                                FROM fab.f_mi_equipment where line_id = 'KFR6') e
+                                        ON ttt.ee = e.eqp_id
+                                    ORDER BY process, step, ppid, ee),
+                tee as (SELECT                     
+                                    a.process,
+                                    a.step,
+                                    a.ppid,
+                                    IFNULL(case when ifnull(a.batch_kind, '-') in ('BATCH_FURNACE', 'BATCH_WET') then a.eqpid else b.ee end, a.eqpid) as eqpcham,
+                                    a.eqpid,
+                                    IFNULL(case when ifnull(a.batch_kind, '-') in ('BATCH_FURNACE', 'BATCH_WET') then NULL else b.chamberid end, NULL) as chamberid,
+                                    a.batch_kind,
+                                    (case 
+                        when a.prevent='PREVENT' or b.prevent='PREVENT' then 'PREVENT'
+                                    else 'DOING' end) as prevent,   
+                                    a.prevent as type_body,
+                                    b.prevent as type_cham,          
+                        IFNULL(case when ifnull(a.batch_kind, '-') in ('BATCH_FURNACE', 'BATCH_WET') then a.eventtime else b.eventtime end, a.eventtime) as eventtime,
+                                    IFNULL(a.eqp_line, b.eqp_line) as eqpline
+                                FROM (SELECT * FROM te WHERE chamberid in ('MAIN', '-') or chamberid is null) a
+                                LEFT JOIN (SELECT * FROM te WHERE chamberid not in ('MAIN', '-') and chamberid is not null) b
+                                    ON a.process = b.process
+                                        AND a.step = b.step
+                                        AND a.ppid = b.ppid
+                                        AND a.eqpid = b.eqpid),
+
+so as (select
+s.process_id as processid,
+s.hot_lot_skip_rule as category,
+s.step_skip_rule as skiprule,
+s.eqp_type as eqptype,
+s.layer_id as layerid,
+(case when s.eqp_type_desc='M' then '계측' else '메인' end) as stepseq_type,
+s.step_seq as stepseq,
+s.step_desc as descript,
+s.recipe_id as recipeid,
+s.delay_time as delaytime,
+NULL as n2_delay_time_mins
+from MOS_KH_SMI.LMIMES_MI_STEP s
+where s.process_id in ('KVFI')
+	and step_skip_rule not in ('100', 'ALL_SKIP')),
+pp as (select
+distinct 
+e.product,
+e.product_id,
+e.description,
+p.processid
+from
+(select 
+partnumber as product,
+substr(partnumber, 1,  instr(partnumber, '-')-3)  as product_id,
+descript as description
+from MOS_KH_SMI.SMICDC_ERD_PART
+where startflag='Y') e
+left join (select * from MOS_KH_SMI.SMICDC_ERD_PROCESSPRODUCT where startflag='Y') p
+on e.product=p.partnumber),
+
+s as (select
+(case when stepseq_type='계측' then pp.product_id else so.processid end) as processid,
+so.category,
+so.skiprule,
+so.eqptype,
+so.layerid,
+so.stepseq_type,
+so.stepseq,
+so.descript,
+so.recipeid,
+so.delaytime,
+so.n2_delay_time_mins
+from so
+left join pp
+on so.processid=pp.processid),
+
+t0 as (select
+s.processid,
+s.category,
+s.skiprule,
+(case 
+            when substr(tee.eqpcham,1,1)='M' then 'METRO'
+            when substr(tee.eqpcham,1,1)='P' then 'PHOTO'
+            when substr(tee.eqpcham,1,1)='E' then 'ETCH'
+            when substr(tee.eqpcham,1,1)='S' then 'METAL'
+            when substr(tee.eqpcham,1,1)='T' then 'CVD'
+            when substr(tee.eqpcham,1,1)='W' then 'CLN'
+            when substr(tee.eqpcham,1,1)='D' then 'DIFF'
+            when substr(tee.eqpcham,1,1)='I' then 'IMP'
+            when substr(tee.eqpcham,1,1)='F' then 'IMP'
+                end) as areaname,	
+s.eqptype,
+s.layerid,
+'KFR6' as lineid,
+s.stepseq_type,
+s.stepseq,
+s.descript,
+s.recipeid,
+s.delaytime,
+null as eqpgroup_raw,
+tee.eqpcham,
+tee.eqpid,
+tee.chamberid,
+tee.batch_kind,
+nvl(tee.prevent, '미등록') as prevent,
+tee.type_body,
+tee.type_cham,
+tee.eventtime,
+tee.eqpline
+from s
+left join tee
+on s.processid = tee.process
+	and s.stepseq = tee.step
+	and s.recipeid = tee.ppid),
+
+        ce as (SELECT DISTINCT
+            name as eqp,
+            ppid,
+            childeqp
+                FROM MOS_KH_SMI.SMICDC_ERD_EQPCAPABILITY
+            where revstate = 'Active'            
+            and status = 'Available'),
+
+        t10 as (select
+                processid,                           	
+                category,	
+                skiprule,
+                areaname,	
+                eqptype,	
+                layerid,	
+                lineid,
+                stepseq_type,
+                stepseq,	
+                descript,	
+                recipeid,	
+                delaytime,
+                batch_kind,
+                eqpcham,	
+                eqpid,	
+                chamberid,	
+                prevent,	
+                type_body,
+                type_cham,	
+                eventtime,	
+            childeqp,
+                eqpline
+        from t0
+        left join (select * from ce where ppid<>'-') ce
+        on t0.eqpid = ce.eqp
+            and t0.recipeid = ce.ppid),
+
+       t11 as (select 
+                processid,                           	
+                category,	
+                skiprule,
+                areaname,	
+                eqptype,	
+                layerid,	
+                lineid,
+                stepseq_type,
+                stepseq,	
+                descript,	
+                recipeid,	
+                delaytime,
+                batch_kind,
+                eqpcham,	
+                eqpid,	
+                chamberid,	
+                prevent,	
+                type_body,
+                type_cham,	
+                eventtime,	
+            nvl(t10.childeqp, ce.childeqp) as childeqp,
+                eqpline
+        from t10
+        left join (select * from ce where ppid = '-') ce
+        on t10.eqpid = ce.eqp),
+
+        er as (SELECT      
+            eqp_id,
+            batch_kind,
+            origin_line_id,      
+            eqp_parent_id,
+            (case when count(case when tool_kind='CHAMBER' then eqp_parent_id end) over (partition by eqp_parent_id)>=1 then 'CHAM설비' end) as cc
+        FROM fab.f_mi_equipment where line_id = 'KFR6')
+
+        select distinct
+                processid,                           	
+                category,	
+                skiprule,
+                areaname,	
+                eqptype,	
+                layerid,	
+                lineid,
+                stepseq_type,
+                stepseq,	
+                descript,	
+                recipeid,	
+                delaytime,
+                batch_kind,
+                eqpcham,	
+                eqpid,	
+                chamberid,	
+                nvl(t11.prevent, case when er.cc is not null then '미등록' end) as prevent,	
+                type_body,
+                type_cham,	
+                eventtime,	
+                (case when instr(childeqp,':')>0 then childeqp else null end) as childeqp,
+                eqpline
+        from t11
+        left join (select distinct eqp_parent_id, cc from er where cc is not null and substr(eqp_parent_id,1,1)<>'P') er
+        on t11.eqpid = er.eqp_parent_id
+            """
+
+    ############## get data
+    with timer("getData: steptip"):
+        df_step = getData(
+                            param = steptip,
+                            # user_name = 'minuk12.choi',
+                            convert_type = my_convert_type,
+                            verbose = my_verbose
+                            )
+
+    file_path = "check_result222.xlsx"
+
+
+    t_excel_start = time.perf_counter()
+
+    # 데이터프레임 저장
+    df_steptip.to_excel(
+        file_path, 
+        index=False, 
+        engine="openpyxl")
+    
+    t_excel_end = time.perf_counter()
+    
+    print(f"파일이 저장되었습니다: {file_path}")
+    print(f"파일이 저장시간: {t_excel_end-t_excel_start:.2f} sec")
+
+    return df_steptip
+
+
+smicdc_merge()
